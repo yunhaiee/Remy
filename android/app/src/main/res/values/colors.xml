@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The iPhone app's AppTheme palette. -->
+<resources>
+    <color name="background">#121317</color>
+    <color name="accent">#2E96FF</color>
+    <color name="accent_light">#ACB7FF</color>
+    <color name="text">#F8F9FC</color>
+    <color name="secondary">#B2BBC5</color>
+    <color name="warning">#FFA552</color>
+</resources>

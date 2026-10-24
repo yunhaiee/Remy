@@ -1,0 +1,50 @@
+{
+  "generator": "litert-google-tensor package_litertlm.py",
+  "pack_name": "gemma_4_E2B_it",
+  "model_name": "gemma-4-E2B-it",
+  "model_kind": "llm",
+  "modalities": [
+    "text",
+    "vision",
+    "audio"
+  ],
+  "delivery": "sideload",
+  "app_module": "app",
+  "kotlin_package": "com.yunha.remy",
+  "output_dir": "/Users/yunhalee/dev/Remy/android/litertlm_package",
+  "versions": {
+    "litertlm_maven_release": "0.18.0",
+    "litert_maven_release": "2.3.0",
+    "kotlin_min": "2.3"
+  },
+  "builds": {
+    "Tensor_G5": {
+      "source_path": "/Users/yunhalee/.cache/litert-google-tensor/models/gemma-4-E2B-it_Google_Tensor_G5.litertlm",
+      "file_name": "gemma-4-E2B-it_Google_Tensor_G5.litertlm",
+      "size_bytes": 3113545589,
+      "sha256": "af1082986639ecde7db95d91be6fe54f8b6b458104734c5bafc204e69d6852dc",
+      "modalities": [
+        "text",
+        "vision",
+        "audio"
+      ]
+    },
+    "Tensor_G6": {
+      "source_path": "/Users/yunhalee/.cache/litert-google-tensor/models/gemma-4-E2B-it_Google_Tensor_G6.litertlm",
+      "file_name": "gemma-4-E2B-it_Google_Tensor_G6.litertlm",
+      "size_bytes": 3313938293,
+      "sha256": "f86c7c19c736e9307267946edef58b0a45494a9127036d54d90dd6b7617c95b7",
+      "modalities": [
+        "text",
+        "vision",
+        "audio"
+      ]
+    }
+  },
+  "fallback": null,
+  "notes": [
+    "Using 'sideload' delivery (3,313,938,293 bytes (3313.9 MB) bundle): model files are pushed to /sdcard/Android/data/<app>/files/litertlm/ so they do not bloat the APK."
+  ],
+  "generated_at": "2026-10-24T21:02:44.391721+00:00",
+  "status": "packaged"
+}

@@ -19,3 +19,13 @@ iOS/Remy/Resources/ObjectDetector/*.tflite
 iOS/Remy/Resources/ObjectDetector/*.mlmodelc/
 iOS/Remy/Resources/ObjectDetector/*.mlpackage/
 .dd/
+
+# Android: the 3.3 GB Tensor G6 bundle is sideloaded, never committed; build outputs stay local.
+android/litertlm_package/models/
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/litert_app_verify/
