@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/google-ai-edge/mediapipe",
+  "revision": "e9794ef55e2509c09aa8b6ba1764b797db8eb200",
+  "binaryVersion": "1.1.1",
+  "note": "Packaging adapter selects vision, common and calculator graphs only. Upstream Swift source unchanged. Retains upstream all_load and system link settings for calculator registration."
+}

@@ -3,6 +3,11 @@ options:
   bundleIdPrefix: com.tonykim
   deploymentTarget:
     iOS: '17.0'
+packages:
+  LiteRTLM:
+    path: ../Vendor/LiteRTLM
+  MediaPipeTasks:
+    path: ../Vendor/MediaPipeTasks
 settings:
   base:
     SWIFT_VERSION: '5.0'
@@ -37,6 +42,11 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     sources:
       - Remy/Sources
+    dependencies:
+      - package: LiteRTLM
+        product: LiteRTLM
+      - package: MediaPipeTasks
+        product: MediaPipeTasksVision
     settings:
       base:
         TARGETED_DEVICE_FAMILY: '1'

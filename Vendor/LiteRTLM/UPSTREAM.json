@@ -1,0 +1,60 @@
+{
+  "repository": "https://github.com/google-ai-edge/LiteRT-LM",
+  "tag": "v0.18.1",
+  "commit": "bda624851d74be34d4e1f7fac1fc4155939539c7",
+  "note": "Swift sources are based on the pinned tag, with Conversation.clone() backported from upstream main and a local sendMessageSafely callback adapter added to avoid synchronous native error/teardown races. The adapter admits one request per engine and at most two engines globally, preserves manual tool calls, retains all uncertain failed native owners and globally blocks new requests and requires an app restart before further inference. Package.swift narrows packaging to the iOS product and official prebuilt binary; the native binary is unchanged.",
+  "files": [
+    {
+      "path": "swift/Benchmark.swift",
+      "blobSHA": "a08eecad06bb3108cf6315d7d934fcb2861c952d"
+    },
+    {
+      "path": "swift/Config.swift",
+      "blobSHA": "b67894f25524e8de3f8794684184e6921b938dd4"
+    },
+    {
+      "path": "swift/Conversation.swift",
+      "blobSHA": "91eae31487ed248f282337fd3cabc6f28f146058"
+    },
+    {
+      "path": "swift/EmbeddingEngine.swift",
+      "blobSHA": "f469e40f37c5a62ee43e5bf3dba99e275a9f30de"
+    },
+    {
+      "path": "swift/EmbeddingEngineConfig.swift",
+      "blobSHA": "9af6c9b6f0365e7682af580693bcdbf54f5d607a"
+    },
+    {
+      "path": "swift/Engine.swift",
+      "blobSHA": "2af6cf9bfcd19ac093124dd965b458324d85ae8b"
+    },
+    {
+      "path": "swift/ExperimentalFlags.swift",
+      "blobSHA": "c192e460be05b19173c9c3217905e76df466bd65"
+    },
+    {
+      "path": "swift/LiteRTLMError.swift",
+      "blobSHA": "5c8b86ebbc7a2ab27399465d3a83d6e0dd675f85"
+    },
+    {
+      "path": "swift/Message.swift",
+      "blobSHA": "c611793da249d793221ae8a3d95ceb1f77ab33e0"
+    },
+    {
+      "path": "swift/ModelInfo.swift",
+      "blobSHA": "3b6c18a3dc6a4f25e9e9ee72f9d8442346db1420"
+    },
+    {
+      "path": "swift/ResponseFormat.swift",
+      "blobSHA": "e3c85c2b72aeb4540133f1d8709a2cc7b3c8b9d6"
+    },
+    {
+      "path": "swift/Tool.swift",
+      "blobSHA": "aa8463592595fc02877f09e5d58b7772c9e35f7c"
+    },
+    {
+      "path": "swift/ToolManager.swift",
+      "blobSHA": "63a64aeb31196befa5283ee4f181d0e049cbe2ac"
+    }
+  ]
+}
