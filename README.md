@@ -39,6 +39,20 @@ Built for the Google Gemma Hardware Hackathon (AGI House, Oct 24, 2026 · Mobile
 
 **LiteRT-LM features used:** `Tool` function calling with automatic tool calling off, `ResponseFormat.json` schema-constrained decoding (a Settings switch), `getBenchmarkInfo` for the prefill and decode speeds shown on Evidence, per-encoder backends (LM GPU, vision CPU, audio CPU), `visualTokenBudget`, `enableSpeculativeDecoding` (timing test), a per-model `cacheDir`, and a backported `Conversation.clone()`. What broke and what we measured is in the [field report](docs/litert-on-iphone.md).
 
+## The reflex loop on Pixel
+
+`android/` is one screen that runs the two loops on a Google Pixel: Gemma 4 E2B on the Tensor TPU names and boxes what could be hot, and MediaPipe hands feed a Kotlin port of `HazardWatch` on every frame, with no model call. Same prompts, same geometry, same palette. No voice, recipes or tools.
+
+| What | How | Pixel 10 (Tensor G5, Android 17), Oct 24 |
+|---|---|---|
+| Gemma 4 E2B | LiteRT-LM 0.18.0, precompiled Tensor bundle, `Backend.NPU`, CPU fallback | `install_and_verify.py`: `"path":"npu"`, load 4338 ms |
+| What could be hot | the iPhone's `hazards` prompt, image + text | 2.85 s; prefill 484 tok at 471 tok/s, first token 1.09 s |
+| Box it | Gemma 4 `box_2d` grounding | 2.05 s |
+| Hands | MediaPipe Hand Landmarker on LiteRT, CPU, one request in flight | ~10 fps on a 30 fps camera; 51–77 ms per frame |
+| Alarm | `HazardWatch` (Kotlin port, 22 JUnit tests): any landmark or finger segment on the box for 1 s | orange "Reflex NN ms" pill, vibration and a beep |
+
+Packaged with the `litert-google-tensor` skill (`package_litertlm.py --preset gemma-4-e2b --target Tensor_G5 --target Tensor_G6`, sideload delivery). The 3.1–3.3 GB bundles stay out of Git; `install_and_verify.py --litertlm-package android/litertlm_package` builds, installs and pushes the one for the attached phone. The screen's bottom line names the path it actually took (NPU or CPU fallback) with the measured times. Not yet measured: the reflex alarm on Pixel with a real pot in view, and a Pixel 11 (Tensor G6) run.
+
 ## Honest limits
 
 Gemma 4 E2B is a 2B model. It confuses look-alikes (a red bell pepper for a tomato), cannot count reliably, and names items that are not there when asked an open question. Remy is built around that: boxes as proof, knives found by size, the cook's word beats the camera, and alarms come from geometry, not the model. Step completion is suggested by Gemma and confirmed by the cook. Remy does not measure temperature or promise to prevent injuries.
@@ -49,6 +63,7 @@ Gemma 4 E2B is a 2B model. It confuses look-alikes (a red bell pepper for a toma
 - `RemyCore/` — pure Swift: recipe contracts and validation, cooking session, hazard and reach watchers, voice commands and wake gate, box parsing. `swift test --package-path RemyCore` runs in seconds.
 - `Vendor/LiteRTLM`, `Vendor/MediaPipeTasks` — pinned packages (`UPSTREAM.json`; `Conversation.clone()` backport and a safe callback adapter).
 - `scripts/` — model and detector download with SHA-256 checks, device build, phone smoke test, simulator prompt eval.
+- `android/` — the Pixel screen: `TensorLmLoader` (from the skill), `GemmaHazards`, `MainActivity` (CameraX + MediaPipe), `core/HazardWatch.kt` and its JUnit tests.
 - `docs/` — [build and demo guide](docs/iphone-build.md), [LiteRT field report](docs/litert-on-iphone.md), [team workflow](docs/team-workflow.md).
 
 Generate the Xcode project from `iOS/project.yml`. Signing and the 2.6 GB model stay local and out of Git.
@@ -96,6 +111,20 @@ Google Gemma 하드웨어 해커톤(AGI House, 2026년 10월 24일 · 모바일 
 
 **사용한 LiteRT-LM 기능:** 자동 도구 호출을 끈 `Tool` 함수 호출, `ResponseFormat.json` 스키마 제약 디코딩(설정 스위치), Evidence에 표시되는 프리필·디코딩 속도를 위한 `getBenchmarkInfo`, 인코더별 백엔드(LM GPU, 비전 CPU, 오디오 CPU), `visualTokenBudget`, `enableSpeculativeDecoding`(시간 측정용), 모델별 `cacheDir`, 백포트한 `Conversation.clone()`. 무엇이 깨졌고 무엇을 측정했는지는 [현장 보고서](docs/litert-on-iphone.md)에 있습니다.
 
+## Pixel의 반사 루프
+
+`android/`는 Google Pixel에서 두 루프를 돌리는 화면 하나입니다. Tensor TPU 위의 Gemma 4 E2B가 뜨거울 수 있는 것을 말하고 박스를 그리며, MediaPipe 손 추적이 매 프레임 `HazardWatch`의 Kotlin 포팅에 들어가 모델 호출 없이 비교합니다. 프롬프트, 기하학, 색은 iPhone과 같습니다. 음성, 레시피, 도구는 없습니다.
+
+| 무엇 | 어떻게 | Pixel 10 (Tensor G5, Android 17), 10월 24일 |
+|---|---|---|
+| Gemma 4 E2B | LiteRT-LM 0.18.0, 미리 컴파일된 Tensor 번들, `Backend.NPU`, CPU 대체 | `install_and_verify.py`: `"path":"npu"`, 로드 4338ms |
+| 뜨거울 수 있는 것 | iPhone의 `hazards` 프롬프트, 이미지 + 텍스트 | 2.85초, 프리필 484토큰 471 tok/s, 첫 토큰 1.09초 |
+| 박스 그리기 | Gemma 4 `box_2d` 그라운딩 | 2.05초 |
+| 손 | LiteRT 위의 MediaPipe Hand Landmarker, CPU, 요청 하나씩 | 30fps 카메라에서 약 10fps, 프레임당 51–77ms |
+| 경보 | `HazardWatch`(Kotlin 포팅, JUnit 테스트 22개): 손 랜드마크나 손가락 마디가 1초 동안 박스에 닿으면 | 주황색 "Reflex NN ms" 알약, 진동, 짧은 소리 |
+
+`litert-google-tensor` 스킬로 패키징했습니다(`package_litertlm.py --preset gemma-4-e2b --target Tensor_G5 --target Tensor_G6`, sideload 전달). 3.1–3.3 GB 번들은 Git에 넣지 않고, `install_and_verify.py --litertlm-package android/litertlm_package`가 빌드, 설치, 연결된 폰에 맞는 번들 전송을 합니다. 화면 아래 줄에 실제로 쓴 경로(NPU 또는 CPU 대체)와 측정 시간이 표시됩니다. 아직 측정하지 않은 것: 실제 냄비를 둔 Pixel의 반사 경보, Pixel 11(Tensor G6) 실행.
+
 ## 솔직한 한계
 
 Gemma 4 E2B는 2B 모델입니다. 비슷한 것을 헷갈리고(빨간 파프리카를 토마토로), 개수를 잘 못 세고, 열린 질문을 받으면 없는 물건을 말합니다. Remy는 그 전제로 만들었습니다. 증거로서의 박스, 크기로 찾는 칼, 카메라보다 늘 우선하는 사람의 말, 모델이 아니라 기하학에서 나오는 경보. 단계 완료는 Gemma가 제안하고 요리사가 확정합니다. Remy는 온도를 재지 않으며 부상 예방을 약속하지 않습니다.
@@ -106,6 +135,7 @@ Gemma 4 E2B는 2B 모델입니다. 비슷한 것을 헷갈리고(빨간 파프�
 - `RemyCore/` — 순수 Swift: 레시피 계약과 검증, 요리 세션, 위험·손뻗음 감시, 음성 명령과 호출어 게이트, 박스 파싱. `swift test --package-path RemyCore`가 몇 초면 끝납니다.
 - `Vendor/LiteRTLM`, `Vendor/MediaPipeTasks` — 고정된 패키지(`UPSTREAM.json`, `Conversation.clone()` 백포트와 안전 콜백 어댑터).
 - `scripts/` — SHA-256 확인이 있는 모델·검출기 다운로드, 기기 빌드, 폰 스모크 테스트, 시뮬레이터 프롬프트 평가.
+- `android/` — Pixel 화면: `TensorLmLoader`(스킬에서 생성), `GemmaHazards`, `MainActivity`(CameraX + MediaPipe), `core/HazardWatch.kt`와 JUnit 테스트.
 - `docs/` — [빌드와 데모 안내](docs/iphone-build.md), [LiteRT 현장 보고서](docs/litert-on-iphone.md), [팀 작업 방식](docs/team-workflow.md).
 
 Xcode 프로젝트는 `iOS/project.yml`로 생성합니다. 서명 설정과 2.6 GB 모델은 로컬에만 있고 Git에는 없습니다.
