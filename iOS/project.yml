@@ -1,0 +1,64 @@
+name: Remy
+options:
+  bundleIdPrefix: com.tonykim
+  deploymentTarget:
+    iOS: '17.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    IPHONEOS_DEPLOYMENT_TARGET: '17.0'
+    TARGETED_DEVICE_FAMILY: '1'
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+targets:
+  Remy:
+    type: application
+    # Team and app ID come from Signing.xcconfig + your ignored Local.xcconfig, so regenerating keeps them.
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    platform: iOS
+    entitlements:
+      path: Remy/Remy.entitlements
+      properties:
+        com.apple.developer.kernel.increased-memory-limit: true
+    info:
+      path: Remy/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UIAppFonts:
+          - GoogleSansFlex-Regular.ttf
+          - GoogleSansFlex-Medium.ttf
+          - GoogleSansFlex-Bold.ttf
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    sources:
+      - Remy/Sources
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: '1'
+        MARKETING_VERSION: '0.1.0'
+        CURRENT_PROJECT_VERSION: '1'
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: 'Remy'
+        INFOPLIST_KEY_NSCameraUsageDescription: 'Remy watches your cutting board to coach you. Images stay on this iPhone.'
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: 'Talk to Remy hands-free. Your voice is processed on this iPhone and not saved.'
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: 'Your words are recognized on this iPhone so Remy can answer quickly. Nothing is sent or saved.'
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: 'Connect to your GoPro locally to receive its live camera preview. Video is processed on this iPhone.'
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: 'Pair with your GoPro and enable its local Wi-Fi camera connection. Video is processed on this iPhone.'
+        INFOPLIST_KEY_UIRequiresFullScreen: YES
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        SWIFT_STRICT_CONCURRENCY: minimal
+schemes:
+  Remy:
+    build:
+      targets:
+        Remy: all
+    run:
+      config: Debug

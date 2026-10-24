@@ -1,0 +1,6 @@
+// Shared signing defaults. Each developer puts their own team and app ID in iOS/Local.xcconfig,
+// which Git ignores and xcodegen never overwrites, for example:
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   PRODUCT_BUNDLE_IDENTIFIER = com.yourname.Remy
+PRODUCT_BUNDLE_IDENTIFIER = com.tonykim.Remy
+#include? "Local.xcconfig"

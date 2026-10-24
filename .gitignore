@@ -1,0 +1,21 @@
+.DS_Store
+models/
+.build/
+.swiftpm/
+.build-cache/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+iOS/Remy.xcodeproj/
+.env
+.env.*
+!.env.example
+work/
+__pycache__/
+iOS/Local.xcconfig
+
+# Public detector fetched and verified locally by scripts/download_detector.py; model binaries are not published.
+iOS/Remy/Resources/ObjectDetector/*.tflite
+iOS/Remy/Resources/ObjectDetector/*.mlmodelc/
+iOS/Remy/Resources/ObjectDetector/*.mlpackage/
+.dd/
