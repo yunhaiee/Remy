@@ -5,7 +5,7 @@ import RemyCore
 import Speech
 
 @MainActor final class AppModel: ObservableObject {
-    @Published var cooking = AppModel.restoreSession() { didSet { saveSession(); camera.setIngredientFocus(cooking.phase == .ingredients); syncCookerSafety() } }
+    @Published var cooking = AppModel.restoreSession() { didSet { saveSession(); camera.setIngredientFocus(cooking.phase == .ingredients); syncCookerSafety(); syncKnifeTracking() } }
     @Published var dishRequest = ""
     /// The plan as Gemma writes it; cleared once the finished plan is validated.
     @Published var planPreview: PlanPreview?
@@ -72,7 +72,45 @@ import Speech
             !boxes.contains { $0.label.lowercased() == live.label.lowercased() }
             && (cooking.phase != .ingredients || FastObjectPresentation.isSpecificIdentityReliable(live.label))
         }.map(FastObjectPresentation.displayBox)
-        return boxes + fast
+        return (boxes + fast).filter { !knifeTrackingActive || !KnifeAssociation.isKnife($0.label) }
+    }
+    @Published private(set) var knifeTrack: KnifeTrackSample?
+    private var knifeTrackingEpoch = UUID()
+    private var knifeTrackingSession: UUID?
+    private var knifeWatchdog: Task<Void, Never>?
+    private var knifeTrackingActive: Bool {
+        videoEnabled && !appIsBackgrounded && cooking.phase == .cooking && !cooking.isComplete
+    }
+    var visibleKnifeTrack: KnifeTrackSample? {
+        guard showObjectBoxes, knifeTrackingActive, let knifeTrack,
+              ProcessInfo.processInfo.systemUptime-knifeTrack.time < 0.35 else { return nil }
+        return knifeTrack
+    }
+    private func resetKnifeTracking() {
+        knifeTrackingEpoch = UUID(); knifeTrack = nil; knifeWatchdog?.cancel(); knifeWatchdog = nil
+        camera.setKnifeTrackingEnabled(knifeTrackingActive,epoch:knifeTrackingEpoch)
+    }
+    private func syncKnifeTracking() {
+        if knifeTrackingSession != cooking.id { knifeTrackingSession = cooking.id; resetKnifeTracking() }
+        camera.setKnifeTrackingEnabled(knifeTrackingActive,epoch:knifeTrackingEpoch)
+        if !knifeTrackingActive { knifeTrack = nil; knifeWatchdog?.cancel(); knifeWatchdog = nil }
+    }
+    private func receiveKnife(_ sample: CameraSample) {
+        guard knifeTrackingActive, let result = sample.knifeTracking, result.epoch == knifeTrackingEpoch else {
+            knifeTrack = nil; return
+        }
+        knifeTrack = result.observation
+        guard knifeTrack != nil, knifeWatchdog == nil else { return }
+        knifeWatchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled, let self else { return }
+                guard self.knifeTrackingActive, let track = self.knifeTrack,
+                      ProcessInfo.processInfo.systemUptime-track.time < 0.35 else {
+                    self.knifeTrack = nil; self.knifeWatchdog = nil; return
+                }
+            }
+        }
     }
     @Published private var objectSample: ObjectDetectionSample?
     /// Fresh detector boxes only. Never retain a box across a source/orientation change.
@@ -86,6 +124,8 @@ import Speech
 
     /// Hot things on the counter (pot, pan). A hand reaching one is warned at once by the fast loop, no Gemma call.
     @Published var hazards: [HazardZone] = []
+    @Published var recoveringHazards: [HazardZone] = []
+    private var lastFastHazardSeed = 0.0
     /// Gemma's work, live, for the activity drawer.
     let activity = AgentActivity()
     /// The brief ingredient-selection stage; instruction preparation keeps the ingredient UI live.
@@ -134,16 +174,54 @@ import Speech
     private var cookerScanRunning = false
     private var latestCookerTrack: (time: Double, zones: [HazardZone])?
     private var cookerCandidate: (zone: HazardZone, session: UUID, geometry: UUID)?
+    private var cookerAlarmActive = false
+    private var cookerAlarmPreviousLine: String?
+    private var cookerAlarmLastFrame = 0.0
+    private var cookerAlarmWatchdog: Task<Void, Never>?
+    private let cookerWarningLine = "Be careful of the pot on the stove!"
+    private func clearCookerContactAlarm() {
+        guard cookerAlarmActive else { return }
+        cookerAlarmActive = false
+        cookerAlarmWatchdog?.cancel(); cookerAlarmWatchdog = nil
+        alertUntil = 0
+        audio.endHeldSafetyWarning(); hazardWatch.reset()
+        if chefLine == cookerWarningLine { chefLine = cookerAlarmPreviousLine ?? cooking.step?.instruction ?? "" }
+        cookerAlarmPreviousLine = nil
+    }
+    private func updateCookerContactAlarm(_ zone: HazardZone?, time: Double) {
+        guard let zone else { clearCookerContactAlarm(); return }
+        cookerAlarmLastFrame = time
+        alertUntil = ProcessInfo.processInfo.systemUptime + 0.35
+        guard !cookerAlarmActive else { return }
+        cookerAlarmActive = true; alertCount += 1
+        cookerAlarmPreviousLine = chefLine
+        alertTitle = "Hot surface"; alertSubtitle = "Move your hand clear."; alertSymbol = "flame.fill"
+        chefLine = cookerWarningLine
+        audio.beginHeldSafetyWarning(cookerWarningLine)
+        cooking.record("Held safety warning: hand overlap lasted at least one second at the marked \(zone.label).", origin: .system)
+        lastReflexMS = (ProcessInfo.processInfo.systemUptime - time) * 1000
+        cookerAlarmWatchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled, let self, self.cookerAlarmActive else { return }
+                if !self.videoEnabled || self.appIsBackgrounded || !self.hotWatchEnabled ||
+                    ProcessInfo.processInfo.systemUptime - self.cookerAlarmLastFrame > 0.3 {
+                    self.clearCookerContactAlarm(); return
+                }
+            }
+        }
+    }
     private func syncCookerSafety() {
+        if !hotWatchEnabled { clearCookerContactAlarm() }
         if !safetyBoxesEnabled || cooking.cookerPowerOn == false {
-            hazards = []; cookerCandidate = nil; latestCookerTrack = nil
+            hazards = []; recoveringHazards = []; cookerCandidate = nil; latestCookerTrack = nil
             hazardGeometryEpoch = UUID(); camera.clearHazardTargets(); hazardWatch = HazardWatch()
             return
         }
-        if cooking.phase != .cooking || cooking.isComplete { hazards = []; camera.clearHazardTargets(); latestCookerTrack = nil }
+        if cooking.phase != .cooking || cooking.isComplete { hazards = []; recoveringHazards = []; camera.clearHazardTargets(); latestCookerTrack = nil }
         guard cooking.usesCookerSafetySequence else { cookerCandidate = nil; return }
         if !cooking.cookerSafetyArmed {
-            hazards = []; hazardWatch = HazardWatch()
+            hazards = []; recoveringHazards = []; hazardWatch = HazardWatch()
         } else if usingGoPro, let tracked = latestCookerTrack,
                   ProcessInfo.processInfo.systemUptime - tracked.time < 0.3 {
             hazards = tracked.zones
@@ -167,6 +245,22 @@ import Speech
         cookerCandidate = (zone, session, geometry)
         camera.setHazardTargets([zone], snapshot: picture, id: geometry)
         syncCookerSafety()
+    }
+    /// Cup/bowl detector boxes are already sufficient for this explicitly requested demo proxy.
+    /// Start tracking from that exact detector frame; never wait behind a Gemma conversation.
+    private func seedSafetyFromDetector(_ sample: ObjectDetectionSample) {
+        guard hotWatchEnabled, cooking.usesCookerSafetySequence, videoEnabled,
+              hazards.isEmpty, sample.time - lastFastHazardSeed > 0.4,
+              ProcessInfo.processInfo.systemUptime - sample.time < 0.3 else { return }
+        var zones = CookerSafetyTargets.zones(from: sample.boxes)
+        if !recoveringHazards.isEmpty {
+            zones = zones.filter { candidate in recoveringHazards.contains { $0.overlaps(candidate, threshold: 0.1) } }
+        }
+        guard !zones.isEmpty else { return }
+        lastFastHazardSeed = sample.time
+        clearCookerContactAlarm(); hazardGeometryEpoch = UUID(); cookerCandidate = nil; latestCookerTrack = nil; hazardWatch.reset()
+        camera.setHazardTargets(zones, image: sample.image, time: sample.time, id: hazardGeometryEpoch)
+        if !usingGoPro { hazards = zones }
     }
     private var hotWatchEnabled: Bool {
         safetyBoxesEnabled && cooking.phase == .cooking && !cooking.isComplete &&
@@ -263,7 +357,7 @@ import Speech
     private var nextCheck = 0.0
     private var flatFrames = 0
     private var lastGripHint = 0.0
-    private var sourceRequestID = UUID()
+    private var sourceRequestID = UUID() { didSet { resetKnifeTracking() } }
     private var appIsBackgrounded = false
     private var semanticEpoch = UUID()
     private var inferenceSceneRevision = 0
@@ -276,7 +370,9 @@ import Speech
         sceneTransitions.append("\(Date().timeIntervalSince1970):\(String(describing: phase))")
         if sceneTransitions.count > 20 { sceneTransitions.removeFirst() }
         if phase == .background {
+            clearCookerContactAlarm()
             appIsBackgrounded = true
+            resetKnifeTracking()
             wakeGate = ChefWakeGate(); ingredientPreview = nil
             semanticEpoch = UUID()
             latestUtterance = UUID()
@@ -326,6 +422,7 @@ import Speech
 
     init() {
         camera.setIngredientFocus(cooking.phase == .ingredients)
+        syncKnifeTracking()
         switch cooking.phase {
         case .ingredients: chefLine = "Welcome back. Let's finish checking your ingredients."; toldPlan = true
         case .cooking: chefLine = "Welcome back. We were on \(cooking.step?.title ?? "your recipe")."
@@ -340,7 +437,14 @@ import Speech
             }
         }
         camera.objects.setCoreML(coreMLDetector)
-        camera.objects.onResult = { [weak self] sample in self?.objectSample = sample }
+        camera.objects.onResult = { [weak self] sample in
+            guard let self else { return }
+            self.objectSample = sample
+            self.seedSafetyFromDetector(sample)
+            if self.knifeTrackingActive {
+                self.camera.offerKnifeCandidates(sample.knifeCandidates,image:sample.image,time:sample.time,epoch:self.knifeTrackingEpoch)
+            }
+        }
         GemmaTally.shared.onChange = { [weak self] counts in self?.tally = counts }
         camera.onSnapshot = { [weak self] snapshot in
             guard let self, self.videoEnabled else { return }
@@ -354,7 +458,7 @@ import Speech
         goPro.onFrame = { [camera] pixel in camera.ingestExternal(pixel) }
         camera.onMovement = { [weak self] in
             guard let self else { return }
-            self.boxes = []; self.hazards = []; self.nextHazardScan = 0; self.hazardGeometryEpoch = UUID(); self.cookerCandidate = nil; self.latestCookerTrack = nil; self.camera.clearHazardTargets(); self.hazardWatch.reset()
+            self.clearCookerContactAlarm(); self.boxes = []; self.hazards = []; self.recoveringHazards = []; self.nextHazardScan = 0; self.hazardGeometryEpoch = UUID(); self.cookerCandidate = nil; self.latestCookerTrack = nil; self.camera.clearHazardTargets(); self.hazardWatch.reset()
             guard self.cooking.zone != nil else { return }
             self.cooking.invalidateZone(); self.trackers = [:]
             guard self.cooking.phase == .cooking else { return }
@@ -1278,7 +1382,7 @@ import Speech
             cooking.reportCookerPower(on: power == .on)
             nextHazardScan = 0
             chefLine = power == .off ? "Got it. Kettle safety monitoring paused." :
-                (safetyBoxesEnabled ? "Got it. Kettle safety monitoring resumed." : "Kettle is on. Turn on Safety box & alerts to resume monitoring.")
+                (safetyBoxesEnabled ? "Got it. Kettle safety monitoring resumed." : "Kettle is on. Turn on Fire safety to resume monitoring.")
             if power == .on && cooking.isComplete { chefLine = "The recipe is finished. Start a new cooking session to resume kettle monitoring." }
             audio.say(chefLine, priority: true)
             if hotWatchEnabled { Task { await scanForHazards() } }
@@ -1615,7 +1719,9 @@ import Speech
         let found = await locate([Self.boxQuery(item)], in: newest)
         guard snapshotRequestIsCurrent(request) else { return }
         if let box = found.first {
-            show([ItemBox(label: item, x: box.x, y: box.y, width: box.width, height: box.height)], for: 10)
+            if KnifeAssociation.isKnife(item), knifeTrackingActive {
+                camera.seedGroundedKnife(ItemBox(label:"knife",x:box.x,y:box.y,width:box.width,height:box.height),snapshot:newest,epoch:knifeTrackingEpoch)
+            } else { show([ItemBox(label: item, x: box.x, y: box.y, width: box.width, height: box.height)], for: 10) }
             chefLine = !tool.isEmpty && item.lowercased().contains("knife") ? "Use this one for this step." : "There's the \(item)."
         } else {
             chefLine = "I can't find the \(item). Hold it up to the camera."
@@ -1802,9 +1908,10 @@ import Speech
         if safetyBoxesEnabled && cooking.cookerPowerOn != false && cooking.usesCookerSafetySequence {
             if let tracking = sample.hazardTracking, tracking.id == hazardGeometryEpoch {
                 latestCookerTrack = (sample.time, tracking.zones)
-                if cooking.cookerSafetyArmed { hazards = tracking.zones }
-            } else if usingGoPro { hazards = []; latestCookerTrack = nil }
+                if cooking.cookerSafetyArmed { hazards = tracking.zones; recoveringHazards = tracking.recovering }
+            } else if usingGoPro { hazards = []; recoveringHazards = []; latestCookerTrack = nil }
         }
+        receiveKnife(sample)
         let ids = Set(sample.hands.map(\.id))
         for id in Array(trackers.keys) where !ids.contains(id) { trackers[id]?.reset() }
         // Unknown/duplicated chirality is not a stable track identity, so it cannot trigger a reach alert.
@@ -1828,7 +1935,7 @@ import Speech
         }
         // Gestures must be held ~0.6 s (a passing hand shape is not a command), then 2.5 s of rest. A fist is not
         // used: holding a knife looks like one.
-        if gesturesEnabled && !runningIngredientRegression, let gesture = sample.hands.compactMap(\.gesture).first(where: { ["Thumb_Up", "Thumb_Down", "Open_Palm"].contains($0) }) {
+        if gesturesEnabled && sample.time > alertUntil && !(cooking.cookerSafetyArmed && hazardWatch.hasContact) && !runningIngredientRegression, let gesture = sample.hands.compactMap(\.gesture).first(where: { ["Thumb_Up", "Thumb_Down", "Open_Palm"].contains($0) }) {
             if gesture != heldGesture.0 { heldGesture = (gesture, sample.time) }
             else if sample.time - heldGesture.1 >= (gesture == "Open_Palm" ? 1.0 : 0.6) && sample.time > gestureQuietUntil {
                 gestureQuietUntil = sample.time + 2.5
@@ -1837,26 +1944,28 @@ import Speech
         } else { heldGesture = ("", 0) }
         // The requested cooker sequence warns on image-space proximity; other recipes keep
         // the whole-hand rule. GoPro cooker boxes use frame-matched Vision tracking.
-        if hotWatchEnabled && !hazards.isEmpty && (!usingGoPro || cooking.cookerSafetyArmed) {
-            hazardWatch.proximityMargin = cooking.cookerSafetyArmed ? 0.07 : 0
+        if hotWatchEnabled && (!usingGoPro || cooking.cookerSafetyArmed) {
+            hazardWatch.proximityMargin = 0
+            hazardWatch.anyPartOverlap = cooking.cookerSafetyArmed
+            hazardWatch.minimumContactDuration = cooking.cookerSafetyArmed ? 1 : 0
+            hazardWatch.holdsAlertUntilExit = cooking.cookerSafetyArmed
             hazardWatch.cooldown = cooking.cookerSafetyArmed ? 6 : 2
             let hands = sample.hands.map { hand in
                 HazardWatch.Hand(id: hand.id, points: (0..<21).compactMap { hand.points[String($0)] },
                                  isReliable: hand.id != "unknown")
             }
-            if let zone = hazardWatch.check(hands: hands, zones: hazards, time: sample.time,
-                                            now: ProcessInfo.processInfo.systemUptime) {
+            let zone = hazardWatch.check(hands: hands, zones: hazards, time: sample.time,
+                                         now: ProcessInfo.processInfo.systemUptime)
+            if cooking.cookerSafetyArmed {
+                updateCookerContactAlarm(zone, time: sample.time)
+            } else if let zone, sample.time > alertUntil {
                 alertUntil = sample.time + 2.5; alertCount += 1
-                alertTitle = "Careful — hot cooker"; alertSubtitle = "Keep hands clear of the pot."; alertSymbol = "flame.fill"
-                chefLine = cooking.cookerSafetyArmed ? "Be careful of the pot on the stove!" : "Hot: \(zone.label). Hands back."
-                cooking.record("Fast visual loop: a hand approached the marked \(zone.label) in the camera image.", origin: .system)
+                alertTitle = "Hot: \(zone.label)"; alertSubtitle = "Hands back."; alertSymbol = "flame.fill"
+                chefLine = "Hot: \(zone.label). Hands back."
                 audio.alarm(); audio.say(chefLine, priority: true)
-                let latency = (ProcessInfo.processInfo.systemUptime - sample.time) * 1000
-                lastReflexMS = latency
-                print(String(format: "REMY_REFLEX hot %@ %.0f ms after the frame", zone.label, latency))
-                activity.log(.reflex, "Hand reached the hot \(zone.label)", detail: "alarm from the fast loop, no model call", ms: latency)
             }
-        }
+        } else { clearCookerContactAlarm() }
+
         let cutting = cooking.phase == .cooking && cooking.step.map { $0.kind == .do && !$0.wrongSize.isEmpty } == true
         if gripHints && cutting && sample.hands.contains(where: \.flatHint) {
             flatFrames += 1
@@ -1923,19 +2032,21 @@ import Speech
         chefLine = "Fresh start. What are we making?"
     }
     func startPhoneCamera() {
+        clearCookerContactAlarm()
         guard !appIsBackgrounded else { return }
         videoEnabled = true
         UIApplication.shared.isIdleTimerDisabled = true
-        sourceRequestID = UUID(); hazardGeometryEpoch = UUID(); cookerCandidate = nil; latestCookerTrack = nil; camera.clearHazardTargets(); hazards = []; hazardWatch.reset()
+        sourceRequestID = UUID(); hazardGeometryEpoch = UUID(); cookerCandidate = nil; latestCookerTrack = nil; camera.clearHazardTargets(); hazards = []; recoveringHazards = []; hazardWatch.reset()
         goPro.stop(); usingGoPro = false; objectSample = nil; cooking.invalidateZone(); samples = []; frame = nil; trackers = [:]
         camera.start()
     }
     func startGoPro() async {
+        clearCookerContactAlarm()
         guard !appIsBackgrounded else { return }
         videoEnabled = true
         UIApplication.shared.isIdleTimerDisabled = true
         let requestID = UUID(); sourceRequestID = requestID
-        hazards = []; cookerCandidate = nil; latestCookerTrack = nil; camera.clearHazardTargets(); hazardGeometryEpoch = UUID(); hazardWatch.reset()
+        hazards = []; recoveringHazards = []; cookerCandidate = nil; latestCookerTrack = nil; camera.clearHazardTargets(); hazardGeometryEpoch = UUID(); hazardWatch.reset()
         usingGoPro = true; objectSample = nil; cooking.invalidateZone(); samples = []; frame = nil; trackers = [:]
         camera.prepareExternal()
         await goPro.start()
@@ -1944,9 +2055,10 @@ import Speech
     }
     /// Publish intent immediately; warm tracking survives a video-only pause.
     func toggleVideo() {
+        clearCookerContactAlarm()
         if videoEnabled {
             videoEnabled = false; frame = nil; samples = []; trackers = [:]
-            sourceRequestID = UUID(); hazardGeometryEpoch = UUID(); cookerCandidate = nil; latestCookerTrack = nil; camera.clearHazardTargets(); hazards = []; hazardWatch.reset(); automaticChecks = false; cooking.invalidateZone()
+            sourceRequestID = UUID(); hazardGeometryEpoch = UUID(); cookerCandidate = nil; latestCookerTrack = nil; camera.clearHazardTargets(); hazards = []; recoveringHazards = []; hazardWatch.reset(); automaticChecks = false; cooking.invalidateZone()
             camera.stop(retainingTracker: true); goPro.stop()
             UIApplication.shared.isIdleTimerDisabled = voice.isRecording || audio.isSpeaking
         } else if usingGoPro {
@@ -1957,9 +2069,10 @@ import Speech
         else { startPhoneCamera() }
     }
     func pause() {
+        clearCookerContactAlarm()
         videoEnabled = false; frame = nil
         UIApplication.shared.isIdleTimerDisabled = false
-        sourceRequestID = UUID(); hazardGeometryEpoch = UUID(); cookerCandidate = nil; latestCookerTrack = nil; camera.clearHazardTargets(); hazards = []; hazardWatch.reset()
+        sourceRequestID = UUID(); hazardGeometryEpoch = UUID(); cookerCandidate = nil; latestCookerTrack = nil; camera.clearHazardTargets(); hazards = []; recoveringHazards = []; hazardWatch.reset()
         automaticChecks = false; camera.stop(); goPro.stop(); audio.stop(); samples = []; frame = nil
         if voice.isRecording || voice.isStarting { _ = voice.stop() }
         cooking.invalidateZone(); trackers = [:]

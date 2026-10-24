@@ -10,6 +10,8 @@ struct ObjectDetectionSample {
     let elapsedMS: Double
     /// "EfficientDet-Lite0 · LiteRT · CPU" or "YOLOX-M · Core ML", for Evidence.
     let model: String
+    let image: UIImage
+    var knifeCandidates: [KnifeCandidate] = []
 }
 
 /// EfficientDet-Lite0 on LiteRT (MediaPipe Object Detector, CPU) by default, so the hands, the detector and Gemma are
@@ -68,13 +70,25 @@ final class FastObjectDetector {
                     }
                     let start = ProcessInfo.processInfo.systemUptime
                     let boxes: [ItemBox]
+                    let knifeCandidates: [KnifeCandidate]
                     if let core = self.core {
-                        boxes = try core.detect(image).map { d in
-                            ItemBox(label: d.label, x: d.rect.minX / image.size.width, y: d.rect.minY / image.size.height,
-                                    width: d.rect.width / image.size.width, height: d.rect.height / image.size.height)
+                        let detections = try core.detect(image, knifeThreshold: 0.25)
+                        func box(_ d: KitchenDetection) -> ItemBox {
+                            ItemBox(label: d.label, x: d.rect.minX/image.size.width, y: d.rect.minY/image.size.height,
+                                    width: d.rect.width/image.size.width, height: d.rect.height/image.size.height)
                         }
+                        boxes = Array(detections.filter { $0.score >= 0.5 }.prefix(8)).map(box)
+                        knifeCandidates = detections.filter { KnifeAssociation.isKnife($0.label) }.map { .init(box: box($0), score: Double($0.score)) }
                     } else {
-                        boxes = Self.boxes(try self.detector!.detect(image: MPImage(uiImage: image)), size: image.size)
+                        let result = try self.detector!.detect(image: MPImage(uiImage: image))
+                        boxes = Self.boxes(result, size: image.size)
+                        knifeCandidates = result.detections.compactMap { detection in
+                            guard let category = detection.categories.first, let name = category.categoryName, KnifeAssociation.isKnife(name) else { return nil }
+                            let rect = detection.boundingBox.intersection(CGRect(origin: .zero,size: image.size))
+                            guard !rect.isNull else { return nil }
+                            return KnifeCandidate(box: ItemBox(label: name,x: rect.minX/image.size.width,y: rect.minY/image.size.height,
+                                width: rect.width/image.size.width,height: rect.height/image.size.height),score: Double(category.score))
+                        }
                     }
                     let elapsed = (ProcessInfo.processInfo.systemUptime - start) * 1000
                     let model = self.core == nil ? Self.liteRTName : Self.coreMLName
@@ -102,7 +116,7 @@ final class FastObjectDetector {
                         self.lock.lock(); let valid = self.generation == id; self.lock.unlock()
                         guard valid, ProcessInfo.processInfo.systemUptime - time < 0.5 else { return }
                         self.onResult?(.init(boxes: boxes, time: time, aspect: image.size.width / image.size.height, elapsedMS: elapsed,
-                                             model: model))
+                                             model: model, image: image, knifeCandidates: knifeCandidates))
                     }
                 } catch {
                     // Detection is optional. A failed or missing model must not stop video or hand tracking.

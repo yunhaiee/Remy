@@ -14,13 +14,21 @@ struct TrackedHand: Identifiable {
     /// MediaPipe canned gesture when confident: Thumb_Up, Thumb_Down, Open_Palm, Pointing_Up, Victory, ...
     var gesture: String? = nil
 }
+struct KnifeTrackSample {
+    let id: UUID
+    let box: ItemBox
+    let time: Double
+    let recovering: Bool
+    let confidence: Float
+}
 struct CameraSample {
     let image: UIImage
     let time: TimeInterval
     let hands: [TrackedHand]
     /// Receipt/capture to matching landmarks and preview preparation; excludes GoPro sensor/network delay.
     let visionMS: Double
-    var hazardTracking: (id: UUID, zones: [HazardZone])? = nil
+    var knifeTracking: (epoch: UUID, observation: KnifeTrackSample?)? = nil
+    var hazardTracking: (id: UUID, zones: [HazardZone], recovering: [HazardZone])? = nil
 }
 struct CameraSnapshot {
     let jpeg: Data
@@ -53,7 +61,8 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let time: Double
         let timestamp: Int
         let generation: UUID
-        let hazardTracking: (id: UUID, zones: [HazardZone])?
+        let knifeTracking: (epoch: UUID, observation: KnifeTrackSample?)?
+        let hazardTracking: (id: UUID, zones: [HazardZone], recovering: [HazardZone])?
     }
     // Queue-confined Vision tracker. Each result travels with the exact frame used for hands.
     private struct HazardTrack {
@@ -63,13 +72,18 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         var labels: [String]
         var time: Double
         let aspect: Double
+        var missingSince: [ObjectIdentifier: Double] = [:]
     }
     private var hazardTrack: HazardTrack?
     private var hazardTrackedFrames = 0
     func setHazardTargets(_ zones: [HazardZone], snapshot: CameraSnapshot, id: UUID) {
+        guard let image = UIImage(data: snapshot.jpeg) else { return }
+        setHazardTargets(zones, image: image, time: snapshot.time, id: id)
+    }
+    func setHazardTargets(_ zones: [HazardZone], image: UIImage, time: Double, id: UUID) {
         let intent = intentLock.withLock { self.intent }
         queue.async {
-            guard self.current(intent), let image = UIImage(data: snapshot.jpeg)?.cgImage, !zones.isEmpty else { return }
+            guard self.current(intent), let image = image.cgImage, !zones.isEmpty else { return }
             let requests = zones.map { zone in
                 VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox:
                     CGRect(x: zone.x, y: 1 - zone.y - zone.height, width: zone.width, height: zone.height)))
@@ -82,24 +96,36 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     request.inputObservation = observation
                 }
                 self.hazardTrack = HazardTrack(id: id, handler: handler, requests: requests,
-                    labels: zones.map(\.label), time: snapshot.time, aspect: Double(image.width) / Double(image.height))
+                    labels: zones.map(\.label), time: time, aspect: Double(image.width) / Double(image.height))
             } catch { self.hazardTrack = nil }
         }
     }
     func clearHazardTargets() { queue.async { self.hazardTrack = nil } }
-    private func trackHazards(in image: UIImage, time: Double) -> (id: UUID, zones: [HazardZone])? {
+    private func trackHazards(in image: UIImage, time: Double) -> (id: UUID, zones: [HazardZone], recovering: [HazardZone])? {
         guard var track = hazardTrack else { return nil }
-        guard let cg = image.cgImage, time > track.time else { return (track.id, []) }
+        guard let cg = image.cgImage, time > track.time else { return (track.id, [], []) }
         // Never bridge an interruption or aspect change with a frozen target.
         guard time - track.time < 3, abs(Double(cg.width) / Double(cg.height) - track.aspect) < 0.02 else {
-            hazardTrack = nil; return (track.id, [])
+            hazardTrack = nil; return (track.id, [], [])
         }
         do {
             try track.handler.perform(track.requests, on: cg)
-            var zones: [HazardZone] = []
+            var zones: [HazardZone] = [], recovering: [HazardZone] = []
             var requests: [VNTrackObjectRequest] = [], labels: [String] = []
             for (request, label) in zip(track.requests, track.labels) {
-                guard let observation = request.results?.first as? VNDetectedObjectObservation, observation.confidence >= 0.5 else { continue }
+                let key = ObjectIdentifier(request)
+                guard let observation = request.results?.first as? VNDetectedObjectObservation, observation.confidence >= 0.5 else {
+                    // Retain the original observation/features briefly, but never treat a low-confidence
+                    // last-known rectangle as confirmed contact evidence for an alarm.
+                    if track.missingSince[key] == nil { track.missingSince[key] = time }
+                    if time - (track.missingSince[key] ?? time) <= 0.9 {
+                        let old = request.inputObservation.boundingBox
+                        let zone = HazardZone(label: label, x: old.minX, y: 1-old.maxY, width: old.width, height: old.height)
+                        recovering.append(zone); requests.append(request); labels.append(label)
+                    }
+                    continue
+                }
+                track.missingSince[key] = nil
                 let box = observation.boundingBox
                 let candidate = ItemBox(label: label, x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
                 guard let zone = CookerSafetyTargets.zones(from: [candidate]).first else { continue }
@@ -109,8 +135,108 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             track.requests = requests; track.labels = labels; track.time = time
             hazardTrack = requests.isEmpty ? nil : track
             if !zones.isEmpty { hazardTrackedFrames += 1 }
-            return (track.id, zones)
-        } catch { hazardTrack = nil; return (track.id, []) }
+            return (track.id, zones, recovering)
+        } catch { hazardTrack = nil; return (track.id, [], []) }
+    }
+    private struct KnifeTrack {
+        let id: UUID
+        let epoch: UUID
+        let handler: VNSequenceRequestHandler
+        let request: VNTrackObjectRequest
+        var box: ItemBox
+        var time: Double
+        let aspect: Double
+        var missingSince: Double?
+        var lastCorrection: Double
+    }
+    private var knifeEnabled = false
+    private var knifeEpoch = UUID()
+    private var knifeTrack: KnifeTrack?
+    private var knifeCandidateGate = KnifeCandidateGate()
+    private var recentKnife: (id: UUID, box: ItemBox, time: Double)?
+    private var knifeTrackedFrames = 0, knifeRecoveringFrames = 0, knifeAcquisitions = 0, knifeCorrections = 0
+    private var knifeDurations: [Double] = []
+    func setKnifeTrackingEnabled(_ enabled: Bool, epoch: UUID) {
+        queue.async {
+            if self.knifeEnabled != enabled || self.knifeEpoch != epoch {
+                self.knifeTrack = nil; self.knifeCandidateGate.reset(); self.recentKnife = nil
+            }
+            self.knifeEnabled = enabled; self.knifeEpoch = epoch
+        }
+    }
+    /// Redetection corrects the existing target only when geometry agrees. Another visible knife
+    /// cannot replace a healthy target simply because it has a higher classification score.
+    func offerKnifeCandidates(_ candidates: [KnifeCandidate], image: UIImage, time: Double, epoch: UUID) {
+        let intent = intentLock.withLock { self.intent }
+        queue.async {
+            guard self.current(intent), self.knifeEnabled, !self.ingredientFocus, self.knifeEpoch == epoch,
+                  ProcessInfo.processInfo.systemUptime-time < 0.3 else { return }
+            let previous = self.knifeTrack?.box
+            guard let candidate = KnifeAssociation.select(candidates, previous: previous) else { self.knifeCandidateGate.reset(); return }
+            guard self.knifeCandidateGate.accepts(candidate, time: time) else { return }
+            if let track = self.knifeTrack, time-track.lastCorrection < 0.45 { return }
+            self.seedKnife(candidate.box, image: image, time: time, epoch: epoch)
+        }
+    }
+    func seedGroundedKnife(_ box: ItemBox, snapshot: CameraSnapshot, epoch: UUID) {
+        let intent = intentLock.withLock { self.intent }
+        queue.async {
+            guard self.current(intent), self.knifeEnabled, !self.ingredientFocus, self.knifeEpoch == epoch,
+                  ProcessInfo.processInfo.systemUptime-snapshot.time < 2,
+                  let image = UIImage(data: snapshot.jpeg) else { return }
+            self.seedKnife(box,image:image,time:snapshot.time,epoch:epoch)
+        }
+    }
+    private func seedKnife(_ box: ItemBox, image: UIImage, time: Double, epoch: UUID) {
+        guard KnifeAssociation.valid(box), let cg = image.cgImage else { return }
+        let id: UUID
+        if let current = knifeTrack, KnifeAssociation.matches(box,current.box) { id = current.id }
+        else if let recentKnife, time-recentKnife.time < 2, KnifeAssociation.matches(box,recentKnife.box) { id = recentKnife.id }
+        else { id = UUID() }
+        let request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox:
+            CGRect(x:box.x,y:1-box.y-box.height,width:box.width,height:box.height)))
+        let handler = VNSequenceRequestHandler()
+        do {
+            try handler.perform([request],on:cg)
+            guard let observation = request.results?.first as? VNDetectedObjectObservation, observation.confidence >= 0.5 else { return }
+            if id == knifeTrack?.id || id == recentKnife?.id { knifeCorrections += 1 } else { knifeAcquisitions += 1 }
+            request.inputObservation = observation
+            knifeTrack = KnifeTrack(id:id,epoch:epoch,handler:handler,request:request,box:box,time:time,
+                aspect:Double(cg.width)/Double(cg.height),lastCorrection:time)
+            recentKnife = (id,box,time)
+        } catch { /* A failed correction must not discard the existing valid tracker. */ }
+    }
+    private func trackKnife(in image: UIImage, time: Double) -> (epoch: UUID, observation: KnifeTrackSample?)? {
+        guard knifeEnabled, !ingredientFocus else { return nil }
+        guard var track = knifeTrack else { return (knifeEpoch,nil) }
+        let started = ProcessInfo.processInfo.systemUptime
+        defer {
+            knifeDurations.append((ProcessInfo.processInfo.systemUptime-started)*1000)
+            if knifeDurations.count > 180 { knifeDurations.removeFirst() }
+        }
+        guard track.epoch == knifeEpoch, time > track.time, time-track.time < 2,
+              let cg = image.cgImage, abs(Double(cg.width)/Double(cg.height)-track.aspect)<0.02 else {
+            knifeTrack = nil; return (knifeEpoch,nil)
+        }
+        do {
+            try track.handler.perform([track.request],on:cg)
+            if let result = track.request.results?.first as? VNDetectedObjectObservation, result.confidence >= 0.5 {
+                let rect = result.boundingBox
+                let box = ItemBox(label:"knife",x:rect.minX,y:1-rect.maxY,width:rect.width,height:rect.height)
+                if KnifeAssociation.matches(box,track.box) {
+                    track.request.inputObservation = result; track.box = box; track.time = time; track.missingSince = nil
+                    knifeTrack = track; recentKnife = (track.id,box,time); knifeTrackedFrames += 1
+                    return (knifeEpoch,KnifeTrackSample(id:track.id,box:box,time:time,recovering:false,confidence:result.confidence))
+                }
+            }
+            if track.missingSince == nil { track.missingSince = time }
+            if time-(track.missingSince ?? time) <= 1 {
+                track.time = time; knifeTrack = track; knifeRecoveringFrames += 1
+                return (knifeEpoch,KnifeTrackSample(id:track.id,box:track.box,time:time,recovering:true,confidence:0))
+            }
+        } catch { }
+        knifeTrack = nil
+        return (knifeEpoch,nil)
     }
     private var ingredientFocus = false
     func setIngredientFocus(_ focused: Bool) {
@@ -281,7 +407,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         motion.stopDeviceMotionUpdates(); referenceAttitude = nil
         queue.async {
             guard self.current(id) else { return }
-            self.savePerformance(); self.generation = id; self.latestBusy = nil; self.hazardTrack = nil
+            self.savePerformance(); self.generation = id; self.latestBusy = nil; self.hazardTrack = nil; self.knifeTrack = nil; self.knifeCandidateGate.reset(); self.recentKnife = nil
             self.externalLock.lock(); self.latestExternal = nil; self.externalLock.unlock()
             self.usingExternal = false; self.captureRequested = false; self.session.stopRunning()
             if !retainingTracker { self.pending = nil; self.landmarker = nil }
@@ -305,7 +431,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     }
 
     private func prepareTracker(id: UUID) throws {
-        generation = id; latestBusy = nil; completionTimes = []; hazardTrack = nil; hazardTrackedFrames = 0
+        generation = id; latestBusy = nil; completionTimes = []; hazardTrack = nil; hazardTrackedFrames = 0; knifeTrack = nil; recentKnife = nil; knifeCandidateGate.reset(); knifeTrackedFrames = 0; knifeRecoveringFrames = 0; knifeAcquisitions = 0; knifeCorrections = 0; knifeDurations = []
         objects.stop()
         lastSnapshot = 0; durations = []; processed = 0; dropped = 0; maxHands = 0
         startedAt = 0; firstFrameMS = 0; lastReceipt = ProcessInfo.processInfo.systemUptime
@@ -486,6 +612,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
             let (image, preview, snapshot) = try inputImage(pixel)
             let timestamp = max(lastTimestamp + 1, Int(now * 1000)); lastTimestamp = timestamp
             let delivery = Pending(image: image, preview: preview, snapshot: snapshot, time: now, timestamp: timestamp, generation: generation,
+                knifeTracking: ingredientFocus ? nil : trackKnife(in: snapshot,time: now),
                 hazardTracking: ingredientFocus ? nil : trackHazards(in: snapshot, time: now))
             if ingredientFocus {
                 deliver(delivery, hands: [], now: ProcessInfo.processInfo.systemUptime)
@@ -531,7 +658,7 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         self.durations.append(elapsed); if self.durations.count > 180 { self.durations.removeFirst() }
         if now - self.lastReceipt > 5 { self.savePerformance(); self.lastReceipt = now }
         if !ingredientFocus { objects.submit(pending.snapshot, time: pending.time) }
-        let sample = CameraSample(image: ui, time: pending.time, hands: hands, visionMS: elapsed, hazardTracking: pending.hazardTracking)
+        let sample = CameraSample(image: ui, time: pending.time, hands: hands, visionMS: elapsed, knifeTracking: pending.knifeTracking, hazardTracking: pending.hazardTracking)
         if self.displaySlot.wait(timeout: .now()) == .success {
             DispatchQueue.main.async {
                 defer { self.displaySlot.signal() }
@@ -584,7 +711,12 @@ final class CameraService: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let sorted = durations.sorted()
         func percentile(_ fraction: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * fraction))] }
         let elapsed = startedAt > 0 ? ProcessInfo.processInfo.systemUptime - startedAt : 0
-        let report: [String: Any] = ["timestamp": ISO8601DateFormatter().string(from: Date()), "runtime": "MediaPipe Tasks Vision 1.1.1",
+        let knifeSorted = knifeDurations.sorted()
+        let report: [String: Any] = ["knifeTrackedFrames": knifeTrackedFrames, "knifeRecoveringFrames": knifeRecoveringFrames,
+            "knifeAcquisitions": knifeAcquisitions, "knifeDetectorCorrections": knifeCorrections,
+            "knifeTrackingP50MS": knifeSorted.isEmpty ? 0 : knifeSorted[knifeSorted.count/2],
+            "knifeTrackingP95MS": knifeSorted.isEmpty ? 0 : knifeSorted[Int(Double(knifeSorted.count-1)*0.95)],
+            "timestamp": ISO8601DateFormatter().string(from: Date()), "runtime": "MediaPipe Tasks Vision 1.1.1",
             "backend": backend, "source": usingExternal ? "GoPro" : "iPhone", "processedFrames": processed,
             "ingredientFocus": ingredientFocus, "handAndObjectInferenceEnabled": !ingredientFocus,
             "captureRecoveries": captureRestarts, "trackingRecoveries": trackerRestarts, "captureInterrupted": captureInterrupted,

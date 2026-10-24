@@ -25,7 +25,7 @@ final class CoreMLKitchenDetector {
         guard status == kCVReturnSuccess, let buffer else { throw CocoaError(.coderInvalidValue) }
         inputBuffer = buffer
     }
-    func detect(_ image: UIImage) throws -> [KitchenDetection] {
+    func detect(_ image: UIImage, knifeThreshold: Float = 0.5) throws -> [KitchenDetection] {
         let side = Double(self.side)
         guard image.size.width > 0, image.size.height > 0 else { throw CocoaError(.coderInvalidValue) }
         let scale = min(side/image.size.width, side/image.size.height)
@@ -56,7 +56,7 @@ final class CoreMLKitchenDetector {
         for row in 0..<n where value(row,4) >= 0.25 {
             var best: Float = 0;var label = 0
             for k in 0..<80 { let score = value(row,k+5)*value(row,4);if score > best { best = score;label = k } }
-            guard best >= 0.5, label < labels.count else { continue }
+            guard label < labels.count, best >= (labels[label] == "knife" ? knifeThreshold : 0.5) else { continue }
             let cx=Double(value(row,0)),cy=Double(value(row,1)),w=Double(value(row,2)),h=Double(value(row,3))
             guard cx.isFinite, cy.isFinite, w.isFinite, h.isFinite, w > 0, h > 0 else { continue }
             let rect = CGRect(x:(cx-w/2)/scale,y:(cy-h/2)/scale,width:w/scale,height:h/scale)
@@ -65,10 +65,19 @@ final class CoreMLKitchenDetector {
         }
         var kept: [KitchenDetection] = []
         for item in found.sorted(by:{$0.score > $1.score}) {
+            // Keep NMS bounded even when the lower knife threshold admits many candidates.
+            let ordinaryFull = kept.filter { $0.score >= 0.5 }.count >= 8
+            let knifeFull = kept.filter { $0.label == "knife" }.count >= 3
+            if ordinaryFull && (knifeThreshold >= 0.5 || item.label != "knife" || knifeFull) { continue }
+            if item.score < 0.5 && knifeFull { continue }
             if !kept.contains(where:{$0.label == item.label && Self.iou($0.rect,item.rect)>0.45}) { kept.append(item) }
-            if kept.count == 8 { break }
         }
-        return kept
+        let ordinary = Array(kept.filter { $0.score >= 0.5 }.prefix(8))
+        guard knifeThreshold < 0.5 else { return ordinary }
+        let extras = kept.filter { item in
+            item.label == "knife" && !ordinary.contains { $0.label == "knife" && Self.iou($0.rect,item.rect)>0.8 }
+        }.prefix(3)
+        return ordinary + Array(extras)
     }
 
     private static func iou(_ a: CGRect, _ b: CGRect) -> Double {

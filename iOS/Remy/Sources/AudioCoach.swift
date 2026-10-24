@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import AudioToolbox
+import CoreHaptics
 import UIKit
 
 @MainActor final class AudioCoach: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
@@ -89,6 +90,72 @@ import UIKit
             guard let self, self.current == nil else { return }
             self.onSpeaking?(false)
         }
+    }
+
+    private var safetyHapticEngine: CHHapticEngine?
+    private var safetyHapticPlayer: CHHapticAdvancedPatternPlayer?
+    private var safetyHapticTask: Task<Void, Never>?
+    private var safetyHapticsWanted = false
+    private var safetyWarningUtterance: ObjectIdentifier?
+    private var lastHapticAttempt = -Double.infinity
+
+    /// Haptics-only Core Haptics shares the current recording session, without changing its route.
+    /// Speech occurs once per entry; vibration is held until the owner explicitly clears it.
+    func beginHeldSafetyWarning(_ text: String) {
+        guard !safetyHapticsWanted else { return }
+        safetyHapticsWanted = true
+        say(text, priority: true); safetyWarningUtterance = current
+        startContinuousSafetyHaptics()
+        safetyHapticTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.safetyHapticsWanted else { return }
+                if self.safetyHapticPlayer == nil {
+                    if ProcessInfo.processInfo.systemUptime - self.lastHapticAttempt >= 1 { self.startContinuousSafetyHaptics() }
+                    if self.safetyHapticPlayer == nil { UIImpactFeedbackGenerator(style: .heavy).impactOccurred() }
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
+    }
+    private func startContinuousSafetyHaptics() {
+        lastHapticAttempt = ProcessInfo.processInfo.systemUptime
+        guard safetyHapticsWanted, CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        do {
+            if safetyHapticEngine == nil {
+                let engine = try CHHapticEngine(audioSession: AVAudioSession.sharedInstance())
+                engine.playsHapticsOnly = true; engine.isAutoShutdownEnabled = true
+                engine.resetHandler = { [weak self] in
+                    Task { @MainActor in self?.safetyHapticPlayer = nil; self?.safetyHapticEngine = nil }
+                }
+                engine.stoppedHandler = { [weak self] _ in
+                    Task { @MainActor in self?.safetyHapticPlayer = nil }
+                }
+                safetyHapticEngine = engine
+            }
+            guard let engine = safetyHapticEngine else { return }
+            try engine.start()
+            let event = CHHapticEvent(eventType: .hapticContinuous, parameters: [
+                CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.8),
+                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5)
+            ], relativeTime: 0, duration: 1)
+            let player = try engine.makeAdvancedPlayer(with: CHHapticPattern(events: [event], parameters: []))
+            player.loopEnabled = true; player.loopEnd = 1
+            try player.start(atTime: CHHapticTimeImmediate)
+            safetyHapticPlayer = player
+            print("REMY_SAFETY_HAPTICS continuous started")
+        } catch {
+            safetyHapticPlayer = nil; safetyHapticEngine = nil
+            print("REMY_SAFETY_HAPTICS pulse fallback code=\((error as NSError).code)")
+        }
+    }
+    func endHeldSafetyWarning() {
+        guard safetyHapticsWanted || safetyHapticPlayer != nil else { return }
+        safetyHapticsWanted = false
+        safetyHapticTask?.cancel(); safetyHapticTask = nil
+        try? safetyHapticPlayer?.stop(atTime: CHHapticTimeImmediate); safetyHapticPlayer = nil
+        if let owned = safetyWarningUtterance, current == owned { stop() }
+        safetyWarningUtterance = nil
+        print("REMY_SAFETY_HAPTICS stopped")
     }
 
     func stop() { speech.stopSpeaking(at: .immediate); clearSpeechState() }
