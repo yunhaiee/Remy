@@ -169,4 +169,82 @@ final class HazardWatchTests: XCTestCase {
         }
     }
 
+    func testBowlIsARequestedSafetyProxy() {
+        XCTAssertTrue(CookerSafetyTargets.queries.contains("bowl"))
+        XCTAssertEqual(CookerSafetyTargets.zones(from: [.init(label: "bowl", x: 0.2, y: 0.2, width: 0.3, height: 0.3)]).first?.label, "bowl")
+        XCTAssertFalse(HazardZone.looksHot("bowl"), "Scoped proxy, not a heat measurement")
+    }
+    func testAnyPartRequiresHalfSecondOfContinuousOverlap() {
+        var watch = HazardWatch(); watch.anyPartOverlap = true; watch.minimumContactDuration = 0.5
+        let tip = HazardWatch.Hand(id: "right", points: [.init(0.5, 0.5)])
+        XCTAssertNil(check(&watch, hands: [tip], at: 1))
+        XCTAssertNil(check(&watch, hands: [tip], at: 1.2))
+        XCTAssertNil(check(&watch, hands: [tip], at: 1.49))
+        XCTAssertEqual(check(&watch, hands: [tip], at: 1.51)?.label, "pot")
+        XCTAssertNil(check(&watch, hands: [tip], at: 3), "staying inside must not repeat")
+    }
+    func testDwellResetsOnExitTrackingLossAndFrameGaps() {
+        let tip = HazardWatch.Hand(id: "right", points: [.init(0.5, 0.5)])
+        for loss in ["exit", "zones", "stale", "gap", "other hand"] {
+            var watch = HazardWatch(); watch.anyPartOverlap = true; watch.minimumContactDuration = 0.5
+            XCTAssertNil(check(&watch, hands: [tip], at: 1))
+            XCTAssertNil(check(&watch, hands: [tip], at: 1.2))
+            switch loss {
+            case "exit": XCTAssertNil(check(&watch, hands: [], at: 1.3))
+            case "zones": XCTAssertNil(watch.check(hands: [tip], zones: [], time: 1.3, now: 1.3))
+            case "stale": XCTAssertNil(watch.check(hands: [tip], zones: [pot], time: 1.3, now: 2))
+            case "other hand": XCTAssertNil(check(&watch, hands: [.init(id: "left", points: tip.points)], at: 1.3))
+            default: break
+            }
+            XCTAssertNil(check(&watch, hands: [tip], at: 1.6), loss)
+        }
+    }
+    func testSkeletalSegmentCrossingCountsButNearbyOutsideDoesNot() {
+        var points = Array(repeating: Point2(0.1, 0.5), count: 21)
+        points[1] = .init(0.9, 0.5)
+        XCTAssertTrue(pot.intersectsHand(points))
+        XCTAssertFalse(pot.intersectsHand([.init(0.39, 0.5)]), "No outside proximity margin in overlap mode")
+        XCTAssertFalse(pot.intersectsHand([.init(.nan, 0.5)]))
+    }
+
+    func testVisibleFingertipCanDwellWhenOtherLandmarksAreOffscreen() {
+        var watch = HazardWatch(); watch.anyPartOverlap = true; watch.minimumContactDuration = 0.5
+        let partial = HazardWatch.Hand(id: "right", points: [.init(-0.1, 0.5), .init(0.5, 0.5)])
+        XCTAssertNil(check(&watch, hands: [partial], at: 1))
+        XCTAssertNil(check(&watch, hands: [partial], at: 1.2))
+        XCTAssertNil(check(&watch, hands: [partial], at: 1.4))
+        XCTAssertEqual(check(&watch, hands: [partial], at: 1.51)?.label, "pot")
+    }
+
+    func testHeldAlarmStartsAtOneSecondStaysActiveAndResetsImmediatelyOnExit() {
+        var watch = HazardWatch(); watch.anyPartOverlap = true
+        watch.minimumContactDuration = 1; watch.holdsAlertUntilExit = true
+        let hand = HazardWatch.Hand(id: "right", points: [.init(0.5, 0.5)])
+        for time in [0.0,0.2,0.4,0.6,0.8,0.99] { XCTAssertNil(check(&watch, hands: [hand], at: time)) }
+        XCTAssertTrue(watch.hasContact)
+        XCTAssertEqual(check(&watch, hands: [hand], at: 1)?.label, "pot")
+        XCTAssertEqual(check(&watch, hands: [hand], at: 1.1)?.label, "pot", "active on every frame, not a timed toast")
+        XCTAssertEqual(check(&watch, hands: [hand], at: 1.3)?.label, "pot")
+        XCTAssertNil(check(&watch, hands: [], at: 1.4), "leave: immediately clear")
+        XCTAssertFalse(watch.hasContact)
+        for time in [1.41,1.6,1.8,2.0,2.2,2.4] { XCTAssertNil(check(&watch, hands: [hand], at: time)) }
+        XCTAssertEqual(check(&watch, hands: [hand], at: 2.42)?.label, "pot", "no six-second cooldown or one-second clearance required")
+    }
+    func testHeldAlarmClearsOnLostGeometryStaleFramesAndReset() {
+        let hand = HazardWatch.Hand(id: "right", points: [.init(0.5, 0.5)])
+        for loss in ["geometry", "stale", "reset"] {
+            var watch = HazardWatch(); watch.anyPartOverlap = true
+            watch.minimumContactDuration = 1; watch.holdsAlertUntilExit = true
+            for time in [0.0,0.2,0.4,0.6,0.8] { XCTAssertNil(check(&watch, hands: [hand], at: time)) }
+            XCTAssertNotNil(check(&watch, hands: [hand], at: 1))
+            switch loss {
+            case "geometry": XCTAssertNil(watch.check(hands: [hand], zones: [], time: 1.1, now: 1.1))
+            case "stale": XCTAssertNil(watch.check(hands: [hand], zones: [pot], time: 1.1, now: 1.5))
+            default: watch.reset()
+            }
+            XCTAssertFalse(watch.hasContact)
+            XCTAssertNil(check(&watch, hands: [hand], at: 1.2), loss)
+        }
+    }
+
 }
