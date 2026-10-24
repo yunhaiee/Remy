@@ -11,8 +11,8 @@ Built for the Google Gemma Hardware Hackathon (AGI House, Oct 24, 2026 · Mobile
 1. **"Hey Chef, let's make a cold pasta salad."** Gemma writes the ingredient list, Remy says it out loud and starts the camera. Once every ingredient is confirmed, Gemma writes the cooking steps for exactly that list and Remy asks "Ready to cook?" (Settings has a fixed pasta-salad preset for rehearsals; it is off by default.)
 2. **"Hey Chef, here's the onion."** The spoken name only asks for a look. Gemma identifies the held food without being told the name, then checks a closer crop or a matching printed label before the ingredient counts as present.
 3. **Talk to it like a person.** "I don't have red wine vinegar." Remy suggests a substitute and calls `substitute_ingredient`, so the list and the steps change on screen. "Let's just cook with what I have" removes what is missing. It remembers what you lack.
-4. **"Which knife should I use?" / "Where's the salt?"** A box appears around the right one, drawn from Gemma 4 `box_2d` grounding.
-5. **Reflexes.** Gemma names what on the counter could be hot and boxes it. From then on the fast loop compares hand landmarks against that zone on every frame, with no model call, and the alarm shows its frame-to-alarm time.
+4. **"Which knife should I use?" / "Where's the salt?"** A box appears around the right one, drawn from Gemma 4 `box_2d` grounding. While cooking, one knife stays boxed: the detector finds it, Vision follows it, and the box turns dashed while it is being reacquired. It is a bounding box only; it does not locate the blade.
+5. **Reflexes.** Gemma names what on the counter could be hot and boxes it. From then on the fast loop compares hand landmarks against that zone on every frame, with no model call, and the alarm shows its frame-to-alarm time. In the cooker demo, a fast-detector pot, pan, kettle, cup or bowl box seeds Vision tracking at once, without waiting for Gemma. Any hand landmark or finger segment that stays on the box for one second turns on the "Hot surface" warning and a held vibration until the hand leaves. Leaving clears both at once, and coming back starts a fresh one-second timer.
 6. **Hands full?** Thumbs up: next step. Thumbs down: back. Open palm: quiet.
 7. **"How salty do you like it?"** Gemma hears your spoken answer from the audio itself and saves it as a preference.
 8. **See it think.** A drawer on the left edge shows Gemma's work live: what it heard, each tool call with its timing and result, what the camera checks saw, and reflex alarms. Evidence (Settings → Session) tallies the session: Gemma calls, tool calls, vision checks, boxes and audio.
@@ -35,7 +35,7 @@ Built for the Google Gemma Hardware Hackathon (AGI House, Oct 24, 2026 · Mobile
 
 **Two loops.** Gemma is slow and smart: it plans, interprets the scene and talks. The hand loop is fast and dumb: it checks geometry against zones Gemma already boxed, so a warning never waits for the model.
 
-**The app holds the state, not the model.** The recipe graph, pantry, finished steps, preferences and what the cook lacks live in `RemyCore`, a pure Swift package with 89 tests, and are saved to disk. Gemma decides through tools; the app validates every call before anything changes.
+**The app holds the state, not the model.** The recipe graph, pantry, finished steps, preferences and what the cook lacks live in `RemyCore`, a pure Swift package with 101 tests, and are saved to disk. Gemma decides through tools; the app validates every call before anything changes.
 
 **LiteRT-LM features used:** `Tool` function calling with automatic tool calling off, `ResponseFormat.json` schema-constrained decoding (a Settings switch), `getBenchmarkInfo` for the prefill and decode speeds shown on Evidence, per-encoder backends (LM GPU, vision CPU, audio CPU), `visualTokenBudget`, `enableSpeculativeDecoding` (timing test), a per-model `cacheDir`, and a backported `Conversation.clone()`. What broke and what we measured is in the [field report](docs/litert-on-iphone.md).
 
@@ -68,8 +68,8 @@ Google Gemma 하드웨어 해커톤(AGI House, 2026년 10월 24일 · 모바일 
 1. **"Hey Chef, 콜드 파스타 샐러드 만들자."** Gemma가 재료 목록을 쓰고, Remy가 소리 내어 말한 뒤 카메라를 켭니다. 재료가 모두 확인되면 Gemma가 그 목록에 맞춘 조리 단계를 쓰고, Remy가 "요리 시작할까요?"라고 묻습니다. (리허설용 고정 파스타 샐러드 프리셋이 설정에 있으며 기본값은 꺼짐입니다.)
 2. **"Hey Chef, 여기 양파."** 말한 이름은 확인 요청일 뿐입니다. Gemma가 이름을 듣지 않은 채 들고 있는 음식을 알아보고, 더 가까운 크롭이나 일치하는 인쇄 라벨로 한 번 더 확인해야 재료가 '있음'이 됩니다.
 3. **사람에게 말하듯 말하세요.** "레드 와인 식초가 없어." Remy가 대체 재료를 제안하고 `substitute_ingredient`를 호출해 화면의 목록과 단계가 바뀝니다. "있는 걸로 그냥 하자"라고 하면 없는 재료를 뺍니다. 없다고 한 재료는 기억합니다.
-4. **"어떤 칼을 써야 해?" / "소금 어디 있어?"** Gemma 4 `box_2d` 그라운딩으로 맞는 물건 주위에 박스가 뜹니다.
-5. **반사신경.** Gemma가 조리대에서 뜨거울 수 있는 것을 말하고 박스를 그립니다. 그 뒤로는 빠른 루프가 매 프레임 손 랜드마크를 그 구역과 비교하며 모델을 부르지 않고, 경보에는 프레임에서 경보까지의 시간이 표시됩니다.
+4. **"어떤 칼을 써야 해?" / "소금 어디 있어?"** Gemma 4 `box_2d` 그라운딩으로 맞는 물건 주위에 박스가 뜹니다. 요리 중에는 칼 하나가 계속 박스로 표시됩니다. 검출기가 찾고 Vision이 따라가며, 다시 찾는 동안에는 점선이 됩니다. 경계 상자일 뿐 칼날 위치는 알지 못합니다.
+5. **반사신경.** Gemma가 조리대에서 뜨거울 수 있는 것을 말하고 박스를 그립니다. 그 뒤로는 빠른 루프가 매 프레임 손 랜드마크를 그 구역과 비교하며 모델을 부르지 않고, 경보에는 프레임에서 경보까지의 시간이 표시됩니다. 쿠커 데모에서는 빠른 검출기가 찾은 냄비·팬·주전자·컵·그릇 박스로 Gemma를 기다리지 않고 바로 Vision 추적을 시작합니다. 손 랜드마크나 손가락 마디가 1초 동안 박스에 머물면 "Hot surface" 경고와 진동이 켜지고, 손을 뗄 때까지 유지됩니다. 손을 떼면 둘 다 바로 꺼지고, 다시 들어오면 1초 타이머가 새로 시작됩니다.
 6. **손이 바쁘면?** 엄지 위: 다음 단계. 엄지 아래: 뒤로. 손바닥: 조용히.
 7. **"얼마나 짜게 좋아해요?"** Gemma가 오디오에서 직접 대답을 듣고 선호로 저장합니다.
 8. **생각하는 모습을 봅니다.** 왼쪽 가장자리의 서랍이 Gemma의 작업을 실시간으로 보여 줍니다. 들은 말, 도구 호출마다의 시간과 결과, 카메라 확인이 본 것, 반사 경보. Evidence(설정 → Session)는 이번 세션의 Gemma 호출, 도구 호출, 비전 확인, 박스, 오디오 횟수를 셉니다.
@@ -92,7 +92,7 @@ Google Gemma 하드웨어 해커톤(AGI House, 2026년 10월 24일 · 모바일 
 
 **두 개의 루프.** Gemma는 느리고 똑똑합니다. 계획하고, 장면을 해석하고, 대화합니다. 손 루프는 빠르고 단순합니다. Gemma가 이미 박스로 표시한 구역과 기하학만 비교하므로 경고가 모델을 기다리지 않습니다.
 
-**상태는 모델이 아니라 앱이 들고 있습니다.** 레시피 그래프, 재료 현황, 끝난 단계, 선호, 없는 재료는 테스트 89개가 있는 순수 Swift 패키지 `RemyCore`에 있고 디스크에 저장됩니다. Gemma는 도구로 결정하고, 앱은 무엇이든 바뀌기 전에 모든 호출을 검증합니다.
+**상태는 모델이 아니라 앱이 들고 있습니다.** 레시피 그래프, 재료 현황, 끝난 단계, 선호, 없는 재료는 테스트 101개가 있는 순수 Swift 패키지 `RemyCore`에 있고 디스크에 저장됩니다. Gemma는 도구로 결정하고, 앱은 무엇이든 바뀌기 전에 모든 호출을 검증합니다.
 
 **사용한 LiteRT-LM 기능:** 자동 도구 호출을 끈 `Tool` 함수 호출, `ResponseFormat.json` 스키마 제약 디코딩(설정 스위치), Evidence에 표시되는 프리필·디코딩 속도를 위한 `getBenchmarkInfo`, 인코더별 백엔드(LM GPU, 비전 CPU, 오디오 CPU), `visualTokenBudget`, `enableSpeculativeDecoding`(시간 측정용), 모델별 `cacheDir`, 백포트한 `Conversation.clone()`. 무엇이 깨졌고 무엇을 측정했는지는 [현장 보고서](docs/litert-on-iphone.md)에 있습니다.
 

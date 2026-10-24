@@ -145,19 +145,33 @@ struct ContentView: View {
                                 context.fill(circle, with: .color(accent.opacity(model.cooking.guardArmed ? 0.25 : 0.1)))
                                 context.stroke(circle, with: .color(model.cooking.guardArmed ? accent : AppTheme.accentLight), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
                             }
-                            // Hot zones (pot, pan): dashed orange, labelled, for as long as they are watched.
-                            for zone in model.hazards {
+                            // Safety zones stay dashed in the safety colour and labelled while watched.
+                            for zone in model.hazards + model.recoveringHazards {
+                                let recovering = model.recoveringHazards.contains(zone)
                                 let topLeft = point(.init(zone.x, zone.y)), bottomRight = point(.init(zone.x + zone.width, zone.y + zone.height))
                                 let hot = CGRect(x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y)
                                 let alerting = ProcessInfo.processInfo.systemUptime < model.alertUntil
-                                if alerting { context.fill(Path(roundedRect: hot, cornerRadius: 10), with: .color(AppTheme.warning.opacity(0.22))) }
-                                context.stroke(Path(roundedRect: hot, cornerRadius: 10), with: .color(AppTheme.warning),
+                                if alerting { context.fill(Path(roundedRect: hot, cornerRadius: 10), with: .color(AppTheme.safety.opacity(0.22))) }
+                                context.stroke(Path(roundedRect: hot, cornerRadius: 10), with: .color(AppTheme.safety),
                                                style: StrokeStyle(lineWidth: alerting ? 4 : 2.5, dash: [8, 5]))
-                                let label = context.resolve(Text("hot · \(zone.label)").font(.app(13, .medium)).foregroundColor(.black))
+                                let label = context.resolve(Text(recovering ? "Hot surface · reacquiring" : "Hot surface").font(.app(13, .medium)).foregroundColor(AppTheme.onSafety))
                                 let size = label.measure(in: CGSize(width: 220, height: 40))
                                 let tag = CGRect(x: hot.minX, y: max(0, hot.minY - size.height - 8), width: size.width + 14, height: size.height + 6)
-                                context.fill(Path(roundedRect: tag, cornerRadius: tag.height / 2), with: .color(AppTheme.warning))
+                                context.fill(Path(roundedRect: tag, cornerRadius: tag.height / 2), with: .color(AppTheme.safety))
                                 context.draw(label, at: CGPoint(x: tag.midX, y: tag.midY))
+                            }
+                            if let knife = model.visibleKnifeTrack {
+                                let box = knife.box
+                                let start = point(.init(box.x,box.y)), end = point(.init(box.x+box.width,box.y+box.height))
+                                let knifeRect = CGRect(x:start.x,y:start.y,width:end.x-start.x,height:end.y-start.y)
+                                context.stroke(Path(roundedRect:knifeRect,cornerRadius:6),with:.color(AppTheme.accent),
+                                    style:StrokeStyle(lineWidth:2.5,dash:knife.recovering ? [5,4] : []))
+                                let title = knife.recovering ? "Knife · reacquiring" : "Knife"
+                                let label = context.resolve(Text(title).font(.app(13,.medium)).foregroundColor(.white))
+                                let size = label.measure(in:CGSize(width:220,height:40))
+                                let tag = CGRect(x:knifeRect.minX,y:max(0,knifeRect.minY-size.height-8),width:size.width+14,height:size.height+6)
+                                context.fill(Path(roundedRect:tag,cornerRadius:tag.height/2),with:.color(AppTheme.accent))
+                                context.draw(label,at:CGPoint(x:tag.midX,y:tag.midY))
                             }
                             // Items Gemma located ("Where's the salt?"), in the same normalized space as the hands.
                             for box in model.visibleObjectBoxes {
@@ -184,11 +198,11 @@ struct ContentView: View {
                     if !fill && ProcessInfo.processInfo.systemUptime < model.alertUntil {
                         // Sideways, the voice pill carries the alarm; the card gets one small line.
                         HStack(spacing: 8) {
-                            Circle().fill(.white).frame(width: 6, height: 6)
+                            Circle().fill(AppTheme.onSafety).frame(width: 6, height: 6)
                             Text("\(model.alertTitle) · \(model.alertSubtitle)").font(.app(13, .medium))
                         }
-                        .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 9)
-                        .background(AppTheme.warning, in: Capsule())
+                        .foregroundStyle(AppTheme.onSafety).padding(.horizontal, 14).padding(.vertical, 9)
+                        .background(AppTheme.safety, in: Capsule())
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(.bottom, 14)
                         .allowsHitTesting(false)
                     } else if model.markSaltLocation {
@@ -625,7 +639,7 @@ struct BrainView: View {
                             .font(.app(.footnote)).foregroundStyle(AppTheme.secondary)
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Safety box & alerts", isOn: $model.safetyBoxesEnabled)
+                        Toggle("Fire safety · box & alerts", isOn: $model.safetyBoxesEnabled)
                         Text("Watches the cooker while cooking. Say “I turned the kettle off” to pause, or “I turned it back on” to resume.")
                             .font(.app(.footnote)).foregroundStyle(AppTheme.secondary)
                     }

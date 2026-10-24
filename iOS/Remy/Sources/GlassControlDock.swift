@@ -232,14 +232,14 @@ struct LandscapeGuidanceHeader: View {
                     .contentTransition(.opacity)
                 if let reflexMS {
                     Text(String(format: "Reflex %.0f ms", reflexMS)).font(.app(12, .medium)).monospacedDigit()
-                        .foregroundStyle(AppTheme.warning).fixedSize()
+                        .foregroundStyle(AppTheme.safety).fixedSize()
                         .accessibilityLabel(String(format: "Reflex alarm in %.0f milliseconds", reflexMS))
                 } else if let seconds { GemmaTime(seconds: seconds) }
             }
             .padding(.leading, 12).padding(.trailing, 22).padding(.vertical, 10)
             .frame(maxWidth: 600)
             .frostedGlass(in: Capsule(), interactive: false, frosted: true)
-            .overlay { Capsule().stroke(reflexMS == nil ? Color.clear : AppTheme.warning, lineWidth: 1.5) }
+            .overlay { Capsule().stroke(reflexMS == nil ? Color.clear : AppTheme.safety, lineWidth: 1.5) }
             .shadow(color: .black.opacity(0.25), radius: 16, y: 8)
             .geometryGroup()
             .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: visibleText)
@@ -282,13 +282,13 @@ struct VoiceOrb: View {
             case .alert: (0, 1, 1 + 0.14 * wave(0.3))
             }
             Sparkle()
-                .stroke(mode == .alert ? AnyShapeStyle(AppTheme.warning) : AnyShapeStyle(AppTheme.gradient),
+                .stroke(mode == .alert ? AnyShapeStyle(AppTheme.safety) : AnyShapeStyle(AppTheme.gradient),
                         style: StrokeStyle(lineWidth: 1.8, lineJoin: .round))
                 .frame(width: 22, height: 22)
                 // Turns around the vertical axis, like a coin spinning in place.
                 .rotation3DEffect(.degrees(reduceMotion ? 0 : angle), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
                 .scaleEffect(reduceMotion ? 1 : scale)
-                .shadow(color: (mode == .alert ? AppTheme.warning : AppTheme.accent).opacity(glow), radius: 4 + 12 * glow)
+                .shadow(color: (mode == .alert ? AppTheme.safety : AppTheme.accent).opacity(glow), radius: 4 + 12 * glow)
                 .shadow(color: AppTheme.accentLight.opacity(glow * 0.6), radius: 2)
                 .opacity(mode == .off ? 0.45 : 1)
         }
@@ -376,6 +376,10 @@ enum AppTheme {
     static let outline = Color(hex: 0xE6EAF0).opacity(0.12)
     static let outlineStrong = Color(hex: 0xE6EAF0).opacity(0.24)
     static let warning = Color(hex: 0xFFA552)
+    /// Hot-surface tag, border, pill and orb alert. Our warning orange; red (#E02020) is a one-line switch.
+    static let safety = warning
+    /// Text on a safety-coloured tag: dark on orange for contrast (white if safety becomes red).
+    static let onSafety = background
     static let gradient = LinearGradient(stops: [.init(color: Color(hex: 0x3B6BFF), location: 0), .init(color: Color(hex: 0x2E96FF), location: 0.65),
                                                  .init(color: Color(hex: 0xACB7FF), location: 1)], startPoint: .leading, endPoint: .trailing)
     static let wallpaper = background
