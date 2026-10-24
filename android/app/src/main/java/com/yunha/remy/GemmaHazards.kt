@@ -16,7 +16,7 @@ import org.json.JSONObject
  * name what on the counter could be hot, then box those names with Gemma 4 box_2d grounding.
  */
 class GemmaHazards(private val lm: TensorLmLoader.LoadedLm) {
-    data class Call(val text: String, val ms: Long, val speed: String?)
+    data class Call(val text: String, val ms: Long, val speed: String?, val prefillTps: Double? = null, val decodeTps: Double? = null, val ttft: Double? = null)
     data class Scan(val zones: List<HazardZone>, val names: List<String>, val hazards: Call, val locate: Call?)
 
     /** Hot names from one photo, filtered to heat words; a valid empty scan falls back to common vessels, as on iPhone. */
@@ -46,12 +46,14 @@ class GemmaHazards(private val lm: TensorLmLoader.LoadedLm) {
             // Gemma 4's documented order: images before the text.
             val reply: Message = conversation.sendMessage(Contents.of(Content.ImageBytes(jpeg), Content.Text(prompt)))
             val text = reply.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-            val speed = runCatching { conversation.getBenchmarkInfo() }.getOrNull()?.let {
+            val info = runCatching { conversation.getBenchmarkInfo() }.getOrNull()
+            val speed = info?.let {
                 String.format("prefill %d tok @ %.0f tok/s · decode %d tok @ %.1f tok/s · first token %.2f s",
                     it.lastPrefillTokenCount, it.lastPrefillTokensPerSecond, it.lastDecodeTokenCount,
                     it.lastDecodeTokensPerSecond, it.timeToFirstTokenInSecond)
             }
-            return Call(text, SystemClock.elapsedRealtime() - started, speed)
+            return Call(text, SystemClock.elapsedRealtime() - started, speed,
+                info?.lastPrefillTokensPerSecond, info?.lastDecodeTokensPerSecond, info?.timeToFirstTokenInSecond)
         }
     }
 
