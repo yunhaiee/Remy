@@ -219,7 +219,9 @@ enum ChefBrain {
     /// Boxes for the named items in one frame; items Gemma cannot find are simply missing.
     static func locate(_ items: [String], frame: Data, runner: GemmaRunner) async throws -> ([ItemBox], InferenceResult) {
         let result = try await runner.run(ChefPrompt.locate(count: items.count), prompt: ChefPrompt.locate(items), images: [frame], constrained: false)
-        return (ItemBox.parse(result.text), result)
+        let boxes = ItemBox.parse(result.text)
+        GemmaTally.shared.add(boxes: boxes.count)
+        return (boxes, result)
     }
 
     static func answer(question: String, session: CookingSession, runner: GemmaRunner) async throws -> (String, InferenceResult) {

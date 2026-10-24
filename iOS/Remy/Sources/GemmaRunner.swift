@@ -10,6 +10,32 @@ struct InferenceResult: Sendable {
     var speed: String? = nil
 }
 
+/// What Gemma did this cooking session, for the one-line tally on Evidence. Both runners count their calls here;
+/// the app adds the tool calls it carried out and ChefBrain the boxes Gemma drew.
+final class GemmaTally: @unchecked Sendable {
+    struct Counts: Equatable, Sendable {
+        var calls = 0, tools = 0, vision = 0, boxes = 0, audio = 0
+        var line: String { "This session: \(calls) Gemma calls · \(tools) tool calls · \(vision) vision checks · \(boxes) boxes · \(audio) audio." }
+    }
+    static let shared = GemmaTally()
+    private let lock = NSLock()
+    private var counts = Counts()
+    /// Called on the main queue after every change.
+    var onChange: ((Counts) -> Void)?
+    var snapshot: Counts { lock.lock(); defer { lock.unlock() }; return counts }
+    func add(calls: Int = 0, tools: Int = 0, vision: Int = 0, boxes: Int = 0, audio: Int = 0) {
+        lock.lock()
+        counts.calls += calls; counts.tools += tools; counts.vision += vision; counts.boxes += boxes; counts.audio += audio
+        let value = counts
+        lock.unlock()
+        DispatchQueue.main.async { self.onChange?(value) }
+    }
+    func reset() {
+        lock.lock(); counts = Counts(); lock.unlock()
+        DispatchQueue.main.async { self.onChange?(Counts()) }
+    }
+}
+
 /// Actor confinement keeps model initialization and inference off the UI and serializes SDK access.
 actor GemmaRunner {
     private var engine: Engine?
@@ -121,6 +147,7 @@ actor GemmaRunner {
             enableSpeculativeDecoding: speculativeChat)
         let conversation = try await engine.createConversation(with: config)
         try requireHealthyForeground()
+        GemmaTally.shared.add(calls: 1)
         let start = ProcessInfo.processInfo.systemUptime
         let reply = try await conversation.sendMessageSafely(prompt, maxOutputTokens: maxTokens,
                                                        thinkingConfig: ThinkingConfig(enableThinking: false, thinkingTokenBudget: 0))
@@ -257,6 +284,7 @@ actor GemmaRunner {
         var contents: [Content] = images.map { .imageData($0) }
         contents.append(.text(prompt))
         if let audio { contents.append(.audioData(audio)) }
+        GemmaTally.shared.add(calls: 1, vision: images.isEmpty ? 0 : 1, audio: audio == nil ? 0 : 1)
         let start = ProcessInfo.processInfo.systemUptime
         let thinking = ThinkingConfig(enableThinking: false, thinkingTokenBudget: 0)
         var text = try await conversation.sendMessageSafely(Message(contents: contents), maxOutputTokens: maxTokens,

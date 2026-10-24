@@ -714,7 +714,7 @@ struct BrainView: View {
     }
 }
 
-/// What actually ran: backend, detector, honest limits, session events and the last raw Gemma reply.
+/// What actually ran: the session tally, backend and LiteRT features, session events and the last raw Gemma reply.
 struct EvidenceView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -722,6 +722,9 @@ struct EvidenceView: View {
     var body: some View {
         NavigationStack {
             List {
+                AppSection("This session") {
+                    Text(model.tally.line).font(.app(.subheadline)).monospacedDigit()
+                }
                 AppSection("What is actually running") {
                     LabeledContent("Gemma", value: model.isLoaded ? "Gemma 4 E2B · LiteRT-LM · \(model.backend)" : "Not loaded")
                     if let speed { Text("Last call: \(speed)").font(.app(.footnote)).monospacedDigit() }
@@ -739,6 +742,14 @@ struct EvidenceView: View {
                     Text("Network availability is not proof of airplane mode. Inference uses local files; only model download uses the internet.").font(.app(.caption))
                     Toggle("Experimental finger-curl hints", isOn: $model.gripHints)
                     Text("Finger-curl hints do not detect the blade or establish a safe grip.").font(.app(.caption))
+                }
+                AppSection("LiteRT features used") {
+                    ForEach(Self.liteRTFeatures(constrained: model.constrainedDecoding, coreML: model.detectorName == FastObjectDetector.coreMLName), id: \.0) { name, detail in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(name).font(.app(.subheadline))
+                            Text(detail).font(.app(.caption)).foregroundStyle(AppTheme.secondary)
+                        }
+                    }
                 }
                 AppSection("Honest limits") {
                     Text("Gemma 4 E2B is a 2B model. It confuses look-alikes (a red pepper for a tomato), can't count reliably, and names things that aren't there when asked an open question. So boxes are the evidence, knives are found by size, the cook's word beats the camera, and alarms come from geometry, not the model. Remy doesn't measure temperature or promise to prevent injuries.")
@@ -759,4 +770,16 @@ struct EvidenceView: View {
         }.tint(accent)
     }
 
+    /// The LiteRT and LiteRT-LM APIs this build actually calls, each with where it is used.
+    static func liteRTFeatures(constrained: Bool, coreML: Bool) -> [(String, String)] {
+        [("Tool function calling", "16 Tool definitions, phase-gated; automatic tool calling off, the app validates and runs each call"),
+         ("ResponseFormat.json", constrained ? "On: JSON tasks are decoded against their schema" : "Available in Settings; off until a clean rehearsal (native llguidance abort seen)"),
+         ("getBenchmarkInfo", "Prefill and decode speeds above are read from LiteRT-LM after each call"),
+         ("Per-encoder backends", "Language model on Metal GPU, vision and audio encoders on CPU"),
+         ("visualTokenBudget", "280 for the engine, 140 per camera image"),
+         ("enableSpeculativeDecoding", "Gemma 4 multi-token prediction for chat turns; a timing test, off by default"),
+         ("cacheDir", "Per model and backend in Caches, so later launches skip setup"),
+         ("Conversation.clone()", "Backported from upstream main for the prompt-reuse benchmark"),
+         ("Three LiteRT models at once", coreML ? "Gemma and MediaPipe hands; the detector is on Core ML right now" : "Gemma 4 E2B, MediaPipe hands and gestures, EfficientDet-Lite0")]
+    }
 }

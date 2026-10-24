@@ -63,6 +63,8 @@ import Speech
     var detectorName: String {
         objectSample?.model ?? (coreMLDetector && coreMLDetectorAvailable ? FastObjectDetector.coreMLName : FastObjectDetector.liteRTName)
     }
+    /// Gemma calls, tool calls, vision checks, boxes and audio this session, for Evidence.
+    @Published var tally = GemmaTally.shared.snapshot
     /// Visibility changes never change hazard detection or its always-visible overlay.
     var visibleObjectBoxes: [ItemBox] {
         guard showObjectBoxes else { return [] }
@@ -339,6 +341,7 @@ import Speech
         }
         camera.objects.setCoreML(coreMLDetector)
         camera.objects.onResult = { [weak self] sample in self?.objectSample = sample }
+        GemmaTally.shared.onChange = { [weak self] counts in self?.tally = counts }
         camera.onSnapshot = { [weak self] snapshot in
             guard let self, self.videoEnabled else { return }
             self.samples.append(snapshot)
@@ -1458,6 +1461,7 @@ import Speech
     /// Carry out one tool call. Returns what the chef should hear back about it, if anything.
     private func run(_ action: ChefAgent.Action, heard: String) async -> String? {
         let entry = activity.begin(.tool, Self.describe(action))
+        GemmaTally.shared.add(tools: 1)
         let result = await execute(action, heard: heard)
         activity.finish(entry, detail: result ?? "done")
         return result
@@ -1913,6 +1917,7 @@ import Speech
         instructionsError = nil; startWhenRecipeReady = false; pendingIngredientLook = nil
         if !instructionsPreparing { recipePreparationTask?.cancel(); recipePreparationTask = nil }
         cooking = CookingSession(); dishRequest = ""; trackers = [:]; samples = []; alertCount = 0; agentHistory = []; hazards = []
+        GemmaTally.shared.reset()
         nextHazardScan = 0; toldPlan = false
         audio.stop(); automaticChecks = false; boxes = []
         chefLine = "Fresh start. What are we making?"
