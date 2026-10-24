@@ -8,6 +8,8 @@ packages:
     path: ../Vendor/LiteRTLM
   MediaPipeTasks:
     path: ../Vendor/MediaPipeTasks
+  RemyCore:
+    path: ../RemyCore
 settings:
   base:
     SWIFT_VERSION: '5.0'
@@ -49,6 +51,7 @@ targets:
         product: LiteRTLM
       - package: MediaPipeTasks
         product: MediaPipeTasksVision
+      - package: RemyCore
     settings:
       base:
         TARGETED_DEVICE_FAMILY: '1'
