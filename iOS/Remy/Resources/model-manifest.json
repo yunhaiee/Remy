@@ -1,0 +1,9 @@
+{
+  "repository": "litert-community/gemma-4-E2B-it-litert-lm",
+  "revision": "a790a852d433991c0c0a41c1154cf9b3850300fa",
+  "filename": "gemma-4-E2B-it.litertlm",
+  "size": 2588147712,
+  "sha256": "181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c",
+  "runtime": "LiteRT-LM 0.18.1",
+  "url": "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/a790a852d433991c0c0a41c1154cf9b3850300fa/gemma-4-E2B-it.litertlm"
+}

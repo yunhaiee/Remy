@@ -1,0 +1,8 @@
+{
+  "model": "MediaPipe Gesture Recognizer float16 bundle v1 (hand landmarker + canned gesture classifier)",
+  "source": "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+  "sha256": "97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482",
+  "bytes": 8373440,
+  "license": "Apache-2.0",
+  "gestures": ["None", "Closed_Fist", "Open_Palm", "Pointing_Up", "Thumb_Down", "Thumb_Up", "Victory", "ILoveYou"]
+}

@@ -42,6 +42,8 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     sources:
       - Remy/Sources
+      - path: Remy/Resources
+        buildPhase: resources
     dependencies:
       - package: LiteRTLM
         product: LiteRTLM
