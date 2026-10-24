@@ -1645,6 +1645,77 @@ import Speech
         show([ItemBox(label: step.guardItem, x: box.x, y: box.y, width: box.width, height: box.height)], for: 6)
     }
 
+    /// Hot things Gemma reported in a look or glance that are not watched yet get a zone, after the current call.
+    private func watchHot(_ items: [String]) {
+        let new = items.map { $0.lowercased() }.filter { item in HazardZone.looksHot(item) && !hazards.contains { $0.label == item } }
+        guard !new.isEmpty, hotWatchEnabled, !usingGoPro || cooking.usesCookerSafetySequence else { return }
+        Task { await markHot(Array(new.prefix(2))) }
+    }
+
+    /// Once per recipe, and again after the camera moves: Gemma names what on the counter is or may be hot, then
+    /// boxes each identified item; from then on the fast loop guards it. An empty or failed scan never invents
+    /// targets for more native image calls.
+    func scanForHazards() async {
+        guard hotWatchEnabled, (!usingGoPro || cooking.usesCookerSafetySequence), isLoaded, !cookerScanRunning else { return }
+        if cooking.usesCookerSafetySequence {
+            cookerScanRunning = true
+            defer { cookerScanRunning = false }
+            _ = await markHot(CookerSafetyTargets.queries)
+            return
+        }
+        await waitUntilGemmaIsFree()
+        guard cooking.phase == .cooking, let newest = await freshSnapshot(), !isBusy else { return }
+        isBusy = true
+        let entry = activity.begin(.vision, "Scanning for anything hot")
+        var names: [String] = []
+        do {
+            let (found, result) = try await ChefBrain.hazards(frame: newest.jpeg, runner: runner)
+            names = found.filter(HazardZone.looksHot); rawResponse = result.text
+            print("REMY_HAZARDS \(found) → heat: \(names)")
+            activity.finish(entry, detail: names.isEmpty ? "nothing named hot; boxing pot, pan, cooker, kettle" : names.joined(separator: ", "), ms: result.elapsedMS)
+        } catch {
+            activity.finish(entry, detail: error.localizedDescription, failed: true)
+            isBusy = false
+            return // A native/format failure does not trigger a second vision request.
+        }
+        isBusy = false
+        // Preserve the common-vessel search after a valid empty heat scan, as tested upstream.
+        guard cooking.phase == .cooking else { return }
+        if names.isEmpty { names = ["pot", "pan", "cooker", "kettle"] }
+        await markHot(Array(names.prefix(4)))
+    }
+
+    /// Gemma finds the hot object(s) once and the fast loop watches hands against them from then on.
+    @discardableResult func markHot(_ items: [String]) async -> Bool {
+        for _ in 0..<40 where isBusy { try? await Task.sleep(for: .milliseconds(250)) }
+        guard hotWatchEnabled, (!usingGoPro || cooking.usesCookerSafetySequence), let newest = await freshSnapshot() else { return false }
+        let geometry = hazardGeometryEpoch, source = sourceRequestID, session = cooking.id
+        let found = await locate(items, in: newest)
+        guard hotWatchEnabled, geometry == hazardGeometryEpoch, source == sourceRequestID,
+              session == cooking.id, !found.isEmpty else { return false }
+        if cooking.usesCookerSafetySequence {
+            let named = found.map { box in
+                ItemBox(label: box.label.isEmpty && items.count == 1 ? items[0] : box.label,
+                        x: box.x, y: box.y, width: box.width, height: box.height)
+            }
+            let zones = CookerSafetyTargets.zones(from: named)
+            guard !zones.isEmpty else { return false }
+            camera.setHazardTargets(zones, snapshot: newest, id: geometry)
+            if !usingGoPro { hazards = zones }
+            cooking.record("Located cooker/pot for tracked heat caution.", origin: .system)
+            return true
+        }
+        var zones: [HazardZone] = []
+        for box in found {
+            let zone = HazardZone(box, label: items.count == 1 ? items[0] : (box.label.isEmpty ? items[0] : box.label))
+            // The same object under two names ("pot" and "pan") stays one zone.
+            if !zones.contains(where: { $0.overlaps(zone) }) { zones.append(zone) }
+        }
+        hazards = hazards.filter { old in !zones.contains { $0.label == old.label || $0.overlaps(old) } } + zones
+        cooking.record("Gemma marked hot: \(zones.map(\.label).joined(separator: ", ")).", origin: .system)
+        return true
+    }
+
     /// Gemma answers one request at a time; an automatic check may have slipped in. Wait for it (up to 10 s).
     private func waitUntilGemmaIsFree() async {
         for _ in 0..<40 where isBusy { try? await Task.sleep(for: .milliseconds(250)) }
@@ -1710,6 +1781,114 @@ import Speech
         if hotWatchEnabled && hazards.isEmpty {
             nextHazardScan = ProcessInfo.processInfo.systemUptime + (cooking.usesCookerSafetySequence ? 5 : 15)
             Task { await scanForHazards() }
+        }
+    }
+
+    // MARK: Fast loop
+
+    private func receive(_ sample: CameraSample) {
+        guard videoEnabled else { return }
+        frame = sample
+        if cooking.phase == .ingredients {
+            // The last pre-focus hand callback may still arrive. Keep its video, never its actions.
+            if !trackers.isEmpty { trackers = [:] }
+            heldGesture = ("", 0); flatFrames = 0
+            return
+        }
+        if safetyBoxesEnabled && cooking.cookerPowerOn != false && cooking.usesCookerSafetySequence {
+            if let tracking = sample.hazardTracking, tracking.id == hazardGeometryEpoch {
+                latestCookerTrack = (sample.time, tracking.zones)
+                if cooking.cookerSafetyArmed { hazards = tracking.zones }
+            } else if usingGoPro { hazards = []; latestCookerTrack = nil }
+        }
+        let ids = Set(sample.hands.map(\.id))
+        for id in Array(trackers.keys) where !ids.contains(id) { trackers[id]?.reset() }
+        // Unknown/duplicated chirality is not a stable track identity, so it cannot trigger a reach alert.
+        for hand in sample.hands where hand.id != "unknown" && sample.hands.filter({ $0.id == hand.id }).count == 1 {
+            var tracker = trackers[hand.id] ?? ReachTracker()
+            let warning = tracker.update(point: hand.reachPoint, time: sample.time,
+                                         zone: cooking.zone, armed: cooking.guardArmed && !usingGoPro)
+            trackers[hand.id] = tracker
+            if warning && sample.time > alertUntil {
+                alertUntil = sample.time + 2; alertCount += 1
+                let item = cooking.step?.guardItem ?? "that"
+                alertTitle = "Already added \(item)"; alertSubtitle = "Taste it first."; alertSymbol = "hand.raised.fill"
+                chefLine = "Already added \(item). Taste it first!"
+                cooking.record("Fast visual loop detected an approach to the marked \(item) location.", origin: .system)
+                audio.alarm()
+                let latency = (ProcessInfo.processInfo.systemUptime - sample.time) * 1000
+                lastReflexMS = latency
+                print(String(format: "REMY_REFLEX %@ %.0f ms after the frame", item, latency))
+                activity.log(.reflex, "Reaching for the \(item) again", detail: "alarm from the fast loop, no model call", ms: latency)
+            }
+        }
+        // Gestures must be held ~0.6 s (a passing hand shape is not a command), then 2.5 s of rest. A fist is not
+        // used: holding a knife looks like one.
+        if gesturesEnabled && !runningIngredientRegression, let gesture = sample.hands.compactMap(\.gesture).first(where: { ["Thumb_Up", "Thumb_Down", "Open_Palm"].contains($0) }) {
+            if gesture != heldGesture.0 { heldGesture = (gesture, sample.time) }
+            else if sample.time - heldGesture.1 >= (gesture == "Open_Palm" ? 1.0 : 0.6) && sample.time > gestureQuietUntil {
+                gestureQuietUntil = sample.time + 2.5
+                perform(gesture: gesture)
+            }
+        } else { heldGesture = ("", 0) }
+        // The requested cooker sequence warns on image-space proximity; other recipes keep
+        // the whole-hand rule. GoPro cooker boxes use frame-matched Vision tracking.
+        if hotWatchEnabled && !hazards.isEmpty && (!usingGoPro || cooking.cookerSafetyArmed) {
+            hazardWatch.proximityMargin = cooking.cookerSafetyArmed ? 0.07 : 0
+            hazardWatch.cooldown = cooking.cookerSafetyArmed ? 6 : 2
+            let hands = sample.hands.map { hand in
+                HazardWatch.Hand(id: hand.id, points: (0..<21).compactMap { hand.points[String($0)] },
+                                 isReliable: hand.id != "unknown")
+            }
+            if let zone = hazardWatch.check(hands: hands, zones: hazards, time: sample.time,
+                                            now: ProcessInfo.processInfo.systemUptime) {
+                alertUntil = sample.time + 2.5; alertCount += 1
+                alertTitle = "Careful — hot cooker"; alertSubtitle = "Keep hands clear of the pot."; alertSymbol = "flame.fill"
+                chefLine = cooking.cookerSafetyArmed ? "Be careful of the pot on the stove!" : "Hot: \(zone.label). Hands back."
+                cooking.record("Fast visual loop: a hand approached the marked \(zone.label) in the camera image.", origin: .system)
+                audio.alarm(); audio.say(chefLine, priority: true)
+                let latency = (ProcessInfo.processInfo.systemUptime - sample.time) * 1000
+                lastReflexMS = latency
+                print(String(format: "REMY_REFLEX hot %@ %.0f ms after the frame", zone.label, latency))
+                activity.log(.reflex, "Hand reached the hot \(zone.label)", detail: "alarm from the fast loop, no model call", ms: latency)
+            }
+        }
+        let cutting = cooking.phase == .cooking && cooking.step.map { $0.kind == .do && !$0.wrongSize.isEmpty } == true
+        if gripHints && cutting && sample.hands.contains(where: \.flatHint) {
+            flatFrames += 1
+            if flatFrames >= 4 && sample.time - lastGripHint > 12 && sample.time > alertUntil {
+                chefLine = "Check your guiding hand. Curl those fingertips away from the blade."
+                audio.say(chefLine); lastGripHint = sample.time
+            }
+        } else { flatFrames = 0 }
+        let conversationQuiet = !listener.hearing && !audio.isSpeaking
+            && ProcessInfo.processInfo.systemUptime - audio.lastFinished > 3 && ProcessInfo.processInfo.systemUptime - lastUtterance > 4
+        let freshPicture = samples.last.map { ProcessInfo.processInfo.systemUptime - $0.time < 2 } ?? false
+        // Only look for the cooker after step 1 is confirmed. Retry if it was out of view;
+        // never substitute a made-up box when localization fails.
+        if hotWatchEnabled && !ingredientChecking && !runningIngredientRegression && hazards.isEmpty && sample.time > nextHazardScan && !isBusy && isLoaded && conversationQuiet && freshPicture && (!usingGoPro || cooking.cookerSafetyArmed) {
+            nextHazardScan = sample.time + (cooking.usesCookerSafetySequence ? 5 : 15)
+            Task { await scanForHazards() }
+        }
+        if !cooking.isComplete && automaticChecks && sample.time > nextCheck && !isBusy && isLoaded && cooking.step?.kind == .do && conversationQuiet && freshPicture {
+            nextCheck = sample.time + 6
+            Task { await reviewBoard(spoken: false) }
+        }
+    }
+
+    private func perform(gesture: String) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        cooking.record("Gesture: \(gesture)", origin: .user)
+        print("REMY_GESTURE \(gesture)")
+        let name = gesture.replacingOccurrences(of: "_", with: " ").lowercased()
+        switch (gesture, cooking.phase) {
+        case ("Open_Palm", _): audio.stop(); status = "Quiet."; activity.log(.gesture, "Open palm", detail: "Remy goes quiet")
+        case ("Thumb_Up", .ingredients): activity.log(.gesture, "Thumbs up", detail: "start cooking"); beginCooking()
+        case ("Thumb_Up", .cooking):
+            activity.log(.gesture, "Thumbs up", detail: "next step")
+            if cooking.step?.kind == .ask { announceStep() } else { nextStep() }
+        case ("Thumb_Down", .cooking): activity.log(.gesture, "Thumbs down", detail: "back one step"); selectStep(max(0, cooking.currentStep - 1))
+        default: activity.log(.gesture, name.capitalized, detail: "nothing to do right now")
         }
     }
 
