@@ -61,6 +61,25 @@ Speech is for Remy when it starts with "Chef", "Hey Chef" or "Remy". A wake word
 
 Reset the recipe before each run (Settings → Session) so the tally and the plan start fresh. Rehearse three times in airplane mode with the preset off, then try Settings → Schema-constrained decoding on; keep it on only if a full run survives.
 
+## Three-run rehearsal
+
+**Setup, once.** iPhone 17 in airplane mode, Wi-Fi off, plugged in, sideways on a stand with the counter and both hands in view. Props: an unheated pot, cucumber, tomato, onion, a lemon, a box of pasta, salt, one big and one small knife. Open Remy and wait for the pill to show a Gemma time (warm-up done). Settings: Pasta-salad demo preset **off**, Schema-constrained decoding **off**, Core ML detector **off**, Fire safety · box & alerts **on**, Object boxes **on**, Hand gestures **on**. Open the drawer (sparkle in the dock) so the judges can see it.
+
+**Each run** (about 3 minutes; say every line exactly):
+
+1. Settings → Session → Reset recipe and memory. Evidence should read "This session: 0 Gemma calls · 0 tool calls · 0 vision checks · 0 boxes · 0 audio."
+2. "Hey Chef, let's make a cold pasta salad." Drawer: Heard, then a Plan entry with its time. Remy reads Gemma's ingredient list aloud.
+3. Hold each ingredient up: "Hey Chef, here's the cucumber." (one at a time). Drawer: a vision entry per item; Remy says "Got the cucumber."
+4. For something on the list you did not bring: "Chef, I don't have red wine vinegar." Drawer: `substitute_ingredient`; the list changes. Then "Chef, let's just cook with what I have." Drawer: `remove_ingredient`.
+5. When Remy asks "Ready to cook?": "Yes." Step 1 is spoken.
+6. "Chef, which knife should I use?" Drawer: `find`; a box appears around the big knife.
+7. Put the pot in view and keep talking quiet for ~15 s. Drawer: "Scanning for anything hot", then boxing; a dashed orange "Hot surface" box appears. Hold your whole hand flat over the pot so all of it is inside the box: the pill turns orange with "Reflex NN ms" and the drawer logs the reflex. (With the preset off this is the whole-hand rule; the one-second held alarm with vibration belongs to the pasta-salad preset's cooker steps.)
+8. Thumbs up to move on. At "How salty do you like it?": "Not too salty, please." Drawer: Gemma heard the answer, or `save_preference`.
+9. Open Settings → Session → Evidence: the tally line, the LiteRT-LM speed line, the LiteRT features list and "EfficientDet-Lite0 · LiteRT · CPU".
+
+**Run 1 and Run 2** as above with constrained decoding off. Note any step that failed and the plan time in the drawer.
+**Run 3**: Settings → Schema-constrained decoding **on** (takes effect on the next JSON call, no reload), then the same script. If the run completes with no crash and valid plans, keep it on for the demo; if the app stops or a JSON task fails, turn it off and reopen Remy.
+
 **Historical measurements, previous single-call planner and runtime, Oct 23 (iPhone 17 Pro, Release, GPU):** plan about 11 s for a 5-step recipe (17–25 s for 9–12 steps) with ingredients after about 6 s; chef turns 0.5–0.8 s; ingredient check 2–3 s plus about 3 s to verify claims with boxes; a box search about 3 s; quick board check 1.3 s; a camera question 1.5–2 s; Gemma hearing an answer 1.1 s; Apple speech about 0.1 s after you stop (Gemma transcription fallback 0.35–0.6 s); hand tracking 30 fps at 19 ms per frame; warm-up about 4 s. That earlier configuration paused the camera during planning after concurrent GPU hand tracking slowed one plan to 108 s. The current ingredient-first flow keeps the preview running and uses CPU hand tracking; the split workflow and sustained concurrent performance still require physical measurement. The standard iPhone 17 has not been physically measured. The image encoder runs on CPU; LiteRT-LM 0.18.1 cannot build it on the iPhone GPU. The full LiteRT-LM findings are in [litert-on-iphone.md](litert-on-iphone.md).
 
 ## GoPro HERO12 Black

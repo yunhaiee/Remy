@@ -199,7 +199,10 @@ import Speech
         chefLine = cookerWarningLine
         audio.beginHeldSafetyWarning(cookerWarningLine)
         cooking.record("Held safety warning: hand overlap lasted at least one second at the marked \(zone.label).", origin: .system)
-        lastReflexMS = (ProcessInfo.processInfo.systemUptime - time) * 1000
+        let latency = (ProcessInfo.processInfo.systemUptime - time) * 1000
+        lastReflexMS = latency
+        print(String(format: "REMY_REFLEX hot %@ %.0f ms after the frame", zone.label, latency))
+        activity.log(.reflex, "Hand on the hot \(zone.label) for 1 s", detail: "held alarm from the fast loop, no model call", ms: latency)
         cookerAlarmWatchdog = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -1962,7 +1965,12 @@ import Speech
                 alertUntil = sample.time + 2.5; alertCount += 1
                 alertTitle = "Hot: \(zone.label)"; alertSubtitle = "Hands back."; alertSymbol = "flame.fill"
                 chefLine = "Hot: \(zone.label). Hands back."
+                cooking.record("Fast visual loop: a hand entered the marked \(zone.label) in the camera image.", origin: .system)
                 audio.alarm(); audio.say(chefLine, priority: true)
+                let latency = (ProcessInfo.processInfo.systemUptime - sample.time) * 1000
+                lastReflexMS = latency
+                print(String(format: "REMY_REFLEX hot %@ %.0f ms after the frame", zone.label, latency))
+                activity.log(.reflex, "Hand reached the hot \(zone.label)", detail: "alarm from the fast loop, no model call", ms: latency)
             }
         } else { clearCookerContactAlarm() }
 
