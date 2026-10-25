@@ -204,7 +204,7 @@ private fun CameraOverlay(state: RemyState, modifier: Modifier) {
             if (state.knifeAlert) drawRoundRect(AppTheme.warning.copy(alpha = 0.22f), rect.topLeft, rect.size, corner)
             drawRoundRect(AppTheme.warning, rect.topLeft, rect.size, corner,
                 style = Stroke((if (state.knifeAlert) 4f else 2.5f).dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(), 5.dp.toPx()))))
-            tag(measurer, if (state.knifeRecovering) "Knife · reacquiring" else "Knife", rect, AppTheme.warning, AppTheme.background)
+            tag(measurer, if (state.knifeRecovering) "Knife · reacquiring" else "Knife", rect, AppTheme.warning, Color.White)
         }
         state.presentedBox?.let { box ->
             val rect = Rect(px(Point2(box.x, box.y)), px(Point2(box.x + box.width, box.y + box.height)))

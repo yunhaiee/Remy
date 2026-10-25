@@ -30,10 +30,10 @@ object AppTheme {
     val accent = Color(0xFF2E96FF)
     val accentLight = Color(0xFFACB7FF)
     val warning = Color(0xFFFFA552)
-    /** Hot-surface tag, border, pill and orb alert: our warning orange, as on iPhone. */
-    val safety = warning
-    /** Text on a safety-coloured tag: dark on orange for contrast. */
-    val onSafety = background
+    /** Hot-surface tag, border, pill and orb alert: the iPhone's safety red. The knife uses `warning` orange. */
+    val safety = Color(0xFFE02020)
+    /** Text on a safety-coloured tag: white on red, as on iPhone. */
+    val onSafety = Color.White
     val gradient = Brush.linearGradient(0f to Color(0xFF3B6BFF), 0.6f to Color(0xFF2E96FF), 1f to Color(0xFFACB7FF))
 }
 
