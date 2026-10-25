@@ -100,18 +100,31 @@ class CookingSession {
         return true
     }
 
-    /** Remove only the app-authored third step; earlier work and ingredient confirmations survive. */
-    fun removeRetiredPastaFinalStep(): Boolean {
+    /** Update known app-authored pasta-demo steps without erasing ingredient checks or earlier work. */
+    fun refreshPastaDemoSteps(): Boolean {
         val plan = plan ?: return false
         val preset = IngredientDraft.preset(plan.dish)?.presetInstructions ?: return false
-        if (plan.ingredients != preset.ingredients || plan.steps.size != 3 || plan.steps.take(2) != preset.steps ||
-            plan.steps[2].id !in listOf("combine", "portion_salad")) return false
+        if (plan.ingredients != preset.ingredients || plan.steps.size !in 2..3 ||
+            plan.steps.take(2).map { it.id } != listOf("cook_pasta", "prepare") ||
+            plan.steps[0].title != "Start the pasta" ||
+            plan.steps[1].title !in listOf("Prepare vegetables and lemon", "Dice the vegetables") ||
+            !(plan.steps.size == 2 || plan.steps[2].id in listOf("combine", "portion_salad", "finish_dish")) ||
+            plan == preset) return false
         this.plan = preset
         val retained = preset.steps.map { it.id }.toSet()
         done = done.intersect(retained); added = added.filterKeys { it in retained }
-        currentStep = minOf(currentStep, preset.steps.size - 1)
+        if (plan.steps.last().id != "finish_dish") done = done - "finish_dish"
+        currentStep = if ("prepare" in done) 2 else minOf(currentStep, 2)
         zone = null; suggestedCompletion = false; revision += 1
         return true
+    }
+
+    /** Retake the finished-dish photo: the last do step is open again. */
+    fun reopenFinalDishReview() {
+        val plan = plan ?: return
+        val last = plan.steps.lastOrNull() ?: return
+        if (last.kind != RecipeStep.Kind.DO) return
+        done = done - last.id; currentStep = plan.steps.size - 1; suggestedCompletion = false; revision += 1
     }
 
     val phase: Phase get() = if (plan == null) Phase.NEEDS_DISH else if (ingredientsReviewed && instructionsReady) Phase.COOKING else Phase.INGREDIENTS

@@ -168,12 +168,12 @@ class IngredientDraftTest {
         assertThrows(Exception::class.java) { RecipeInstructions.decode(missingCoreFields, draft) }
     }
 
-    @Test fun testFixedRecipeHasTwoValidSaltFreeInstructions() {
+    @Test fun testFixedRecipeHasThreeValidSaltFreeInstructions() {
         val plan = draft.presetInstructions!!
         assertEquals(emptyList<String>(), plan.problems)
         assertEquals(draft.ingredients, plan.ingredients)
-        assertEquals(2, plan.steps.size)
-        assertEquals(listOf("cook_pasta", "prepare"), plan.steps.map { it.id })
+        assertEquals(3, plan.steps.size)
+        assertEquals(listOf("cook_pasta", "prepare", "finish_dish"), plan.steps.map { it.id })
         assertFalse(plan.steps.any { it.kind == RecipeStep.Kind.ASK || it.isGuarded })
         assertFalse(plan.steps.any { (it.instruction + it.title).lowercase().contains("salt") })
         val modified = IngredientDraft(draft.dish, draft.ingredients.dropLast(1))
@@ -191,6 +191,8 @@ class IngredientDraftTest {
         val restored = roundTrip(session)
         assertTrue(restored.cookerSafetyArmed)
         session.nextStep()
+        assertTrue(session.cookerSafetyArmed)
+        session.nextStep()
         assertFalse(session.cookerSafetyArmed)
         session.selectStep(1)
         assertFalse("going back after finishing does not re-arm the cooker", session.cookerSafetyArmed)
@@ -204,7 +206,7 @@ class IngredientDraftTest {
             RecipeStep(id = "cook_pasta", title = "Cook and cool pasta",
                 instruction = "Cook pasta in plain water according to its package directions, then drain and let it cool.",
                 doneWhen = "pasta cooked, drained and cooled", tool = "pot"),
-        ) + updated.steps.drop(1) + listOf(RecipeStep(id = "combine", title = "Mix salad", instruction = "Mix ingredients.", doneWhen = "mixed")))
+        ) + listOf(updated.steps[1]) + listOf(RecipeStep(id = "combine", title = "Mix salad", instruction = "Mix ingredients.", doneWhen = "mixed")))
         val session = CookingSession(); session.start(old)
         for (ingredient in old.ingredients) session.setPantry(ingredient.id, PantryStatus.SEEN)
         session.beginCooking(); session.nextStep()
@@ -228,46 +230,49 @@ class IngredientDraftTest {
         session.reportCookerPower(true)
         assertTrue(session.cookerSafetyArmed)
         assertEquals(step, session.currentStep)
-        session.nextStep()
+        session.nextStep(); session.nextStep()
         assertFalse("recipe completion still ends the demo window", session.cookerSafetyArmed)
     }
 
-    @Test fun testRetiredThirdStepIsRemovedWithoutReplayingFinishedCutting() {
+    @Test fun testSavedTwoStepDemoResumesAtNewFinalStep() {
+        val preset = draft.presetInstructions!!
+        val old = RecipePlan(preset.dish, preset.ingredients, preset.steps.take(2))
+        val session = CookingSession(); session.start(old); session.setPantry("onion", PantryStatus.SEEN)
+        session.beginCooking(); session.nextStep(); session.nextStep()
+        assertTrue(session.isComplete)
+        assertTrue(session.refreshPastaDemoSteps())
+        assertEquals(preset, session.plan); assertEquals(2, session.currentStep)
+        assertEquals(setOf("cook_pasta", "prepare"), session.done)
+        assertEquals(PantryStatus.SEEN, session.pantry["onion"]?.status)
+        assertFalse(session.isComplete); assertTrue(session.cookerSafetyArmed)
+        assertFalse(session.refreshPastaDemoSteps())
+        session.nextStep(); assertTrue(session.isComplete)
+        session.reopenFinalDishReview(); assertFalse(session.isComplete)
+        assertEquals(2, session.currentStep)
+    }
+
+    @Test fun testOldThirdStepCompletionDoesNotCompleteNewPhotoStep() {
         val preset = draft.presetInstructions!!
         for (id in listOf("combine", "portion_salad")) {
-            val old = RecipePlan(preset.dish, preset.ingredients, preset.steps + listOf(
-                RecipeStep(id = id, title = "Old final step", instruction = "Old final instruction.", needs = listOf("prepare"), doneWhen = "done")))
-            var session = CookingSession(); session.start(old); session.setPantry("onion", PantryStatus.SEEN)
-            session.beginCooking(); session.nextStep(); session.nextStep()
-            assertEquals(2, session.currentStep)
-            val obj = JSONObject(session.toJson())
-            obj.put("portioning", JSONObject().put("phase", "awaitingPortions").put("counts", JSONObject()))
-            session = CookingSession.fromJson(obj.toString())!!
-            assertTrue(session.removeRetiredPastaFinalStep())
-            assertEquals(preset, session.plan); assertEquals(1, session.currentStep)
-            assertEquals(setOf("cook_pasta", "prepare"), session.done)
-            assertEquals(PantryStatus.SEEN, session.pantry["onion"]?.status)
-            assertTrue(session.isComplete); assertFalse(session.cookerSafetyArmed)
-            val saved = JSONObject(session.toJson())
-            assertFalse("retired runtime state is omitted on the next save", saved.has("portioning"))
-            assertFalse(session.removeRetiredPastaFinalStep())
+            val old = RecipePlan(preset.dish, preset.ingredients, preset.steps.take(2) + listOf(
+                RecipeStep(id = id, title = "Old final step", instruction = "Mix.", doneWhen = "done")))
+            val session = CookingSession(); session.start(old); session.beginCooking()
+            session.nextStep(); session.nextStep(); session.nextStep()
+            assertTrue(session.refreshPastaDemoSteps())
+            assertFalse(session.isComplete); assertFalse(session.done.contains("finish_dish"))
         }
     }
 
-    @Test fun testThirdStepRemovalPreservesAnUnfinishedCuttingStep() {
-        val preset = draft.presetInstructions!!
-        val old = RecipePlan(preset.dish, preset.ingredients, preset.steps + listOf(
-            RecipeStep(id = "portion_salad", title = "Build salad", instruction = "Count pinches.", doneWhen = "done")))
-        val session = CookingSession(); session.start(old); session.beginCooking(); session.nextStep()
-        assertTrue(session.removeRetiredPastaFinalStep())
-        assertEquals(setOf("cook_pasta"), session.done); assertEquals(1, session.currentStep)
-        assertFalse(session.isComplete); assertTrue(session.cookerSafetyArmed)
-        session.nextStep(); assertTrue(session.isComplete)
+    @Test fun testRecipeMigrationDoesNotReplaceGeneratedRecipes() {
+        val session = CookingSession(); session.start(instructions(draft))
+        assertFalse(session.refreshPastaDemoSteps())
+        assertEquals(listOf("prepare", "mix"), session.plan?.steps?.map { it.id })
     }
 
-    @Test fun testThirdStepRemovalDoesNotTruncateGeneratedRecipes() {
-        val session = CookingSession(); session.start(instructions(draft))
-        assertFalse(session.removeRetiredPastaFinalStep())
-        assertEquals(listOf("prepare", "mix"), session.plan?.steps?.map { it.id })
+    @Test fun testRequestedInstructionTextAndNoLemonInDicing() {
+        val steps = draft.presetInstructions!!.steps
+        assertEquals("Pour water into the pot, turn on the electric cooker, and add the pasta.", steps[0].instruction)
+        assertFalse((steps[1].title + steps[1].instruction).lowercase().contains("lemon"))
+        assertTrue(steps[2].instruction.startsWith("Add all the ingredients together, mix, and juice the lemon."))
     }
 }

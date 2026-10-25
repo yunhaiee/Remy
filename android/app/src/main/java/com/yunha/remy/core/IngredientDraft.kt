@@ -33,13 +33,16 @@ data class IngredientDraft(val dish: String, val ingredients: List<Ingredient>) 
         if (ingredients != preset.ingredients) return null
         return RecipePlan(dish, ingredients, listOf(
             RecipeStep(id = "cook_pasta", title = "Start the pasta",
-                instruction = "Pour water into the pot, turn on the electric cooker, and add the pasta. Follow the pasta package cooking time once the water boils.",
+                instruction = "Pour water into the pot, turn on the electric cooker, and add the pasta.",
                 doneWhen = "pot filled with water, cooker switched on and pasta added", tool = "pot",
                 warning = "Keep hands clear of the cooker and steam."),
-            RecipeStep(id = "prepare", title = "Prepare vegetables and lemon",
-                instruction = "While the pasta cooks, dice onion, cucumber and tomato into 1 cm pieces, then juice the lemon.",
-                doneWhen = "vegetables diced to 1 cm and lemon juiced",
+            RecipeStep(id = "prepare", title = "Dice the vegetables",
+                instruction = "Dice the onion, cucumber and tomato into consistent 1 cm pieces.",
+                doneWhen = "vegetables diced into consistent 1 cm pieces",
                 wrongSize = "whole vegetables or pieces larger than 1 cm", tool = "chef's knife"),
+            RecipeStep(id = "finish_dish", title = "Mix and finish",
+                instruction = "Add all the ingredients together, mix, and juice the lemon. Show the dish to the camera and tell me when it's ready.",
+                needs = listOf("cook_pasta", "prepare"), doneWhen = "cook presents the finished dish and says it is ready"),
         ))
     }
 

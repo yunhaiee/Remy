@@ -57,6 +57,17 @@ data class HazardZone(val label: String, val x: Double, val y: Double, val width
 
     val center: Point2 get() = Point2(x + width / 2, y + height / 2)
 
+    /**
+     * Expand width and height around the detected center, clipping at image edges.
+     * Apply only to the safety boundary, never feed the expanded box back into tracking.
+     */
+    fun expanded(scale: Double): HazardZone {
+        if (!(scale.isFinite() && scale >= 1 && x.isFinite() && y.isFinite() && width.isFinite() && height.isFinite() && width > 0 && height > 0)) return this
+        val left = max(0.0, x - width * (scale - 1) / 2); val top = max(0.0, y - height * (scale - 1) / 2)
+        val right = min(1.0, x + width + width * (scale - 1) / 2); val bottom = min(1.0, y + height + height * (scale - 1) / 2)
+        return HazardZone(label, left, top, max(0.0, right - left), max(0.0, bottom - top))
+    }
+
     /** Two names for one object ("pot" and "pan" on the same box) must not become two zones that alarm twice. */
     fun overlaps(other: HazardZone, threshold: Double = 0.6): Boolean {
         val w = max(0.0, min(x + width, other.x + other.width) - max(x, other.x))

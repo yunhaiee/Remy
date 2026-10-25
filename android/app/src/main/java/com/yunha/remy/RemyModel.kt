@@ -129,7 +129,11 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
     private fun restore(): CookingSession {
         val text = runCatching { File(context.filesDir, "session.json").readText() }.getOrNull() ?: return CookingSession()
         val restored = CookingSession.fromJson(text)?.takeIf { it.plan != null } ?: return CookingSession()
-        restored.refreshLegacyPastaInstructions(); restored.removeRetiredPastaFinalStep(); restored.restoredAfterLaunch()
+        // RemyModel.restoreSession on iPhone: the preset never keeps salt, legacy and two-step demos move to the current preset.
+        val preset = IngredientDraft.preset(restored.plan?.dish ?: "") != null && restored.removeForReplanning("salt")
+        val legacy = restored.refreshLegacyPastaInstructions(); val demo = restored.refreshPastaDemoSteps()
+        restored.restoredAfterLaunch()
+        if (preset || legacy || demo) runCatching { File(context.filesDir, "session.json").writeText(restored.toJson()) }
         Log.i(TAG, "REMY_SESSION restored ${restored.plan?.dish} phase ${restored.phase} step ${restored.currentStep + 1}")
         return restored
     }
