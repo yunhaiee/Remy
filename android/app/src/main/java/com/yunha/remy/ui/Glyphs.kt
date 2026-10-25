@@ -42,7 +42,8 @@ fun sparklePath(size: Size): Path = Path().apply {
     close()
 }
 
-enum class OrbMode { IDLE, THINKING, ALERT }
+/** VoiceOrb.Mode on iPhone: off, listening, hearing, thinking, speaking, alert. IDLE is listening without the mic. */
+enum class OrbMode { OFF, IDLE, LISTENING, HEARING, THINKING, SPEAKING, ALERT }
 
 /**
  * VoiceOrb: the sparkle turning about the vertical axis like a coin, 30°/s idle, 300°/s while Gemma works,
@@ -54,8 +55,8 @@ fun VoiceOrb(mode: OrbMode, modifier: Modifier = Modifier) {
     LaunchedEffect(mode) {
         var last = 0L
         while (true) withFrameNanos { now ->
-            if (last != 0L && mode != OrbMode.ALERT) {
-                val speed = if (mode == OrbMode.THINKING) 300f else 30f
+            if (last != 0L && mode != OrbMode.ALERT && mode != OrbMode.SPEAKING && mode != OrbMode.OFF) {
+                val speed = when (mode) { OrbMode.THINKING -> 300f; OrbMode.HEARING -> 90f; else -> 30f }
                 angle = (angle + speed * (now - last) / 1e9f) % 360f
             }
             last = now
@@ -67,8 +68,9 @@ fun VoiceOrb(mode: OrbMode, modifier: Modifier = Modifier) {
         Canvas(Modifier.size(22.dp).graphicsLayer {
             rotationY = if (mode == OrbMode.ALERT) 0f else angle
             cameraDistance = 8 * density
-            val scale = if (mode == OrbMode.ALERT) 1f + 0.14f * pulse else 1f
+            val scale = when (mode) { OrbMode.ALERT -> 1f + 0.14f * pulse; OrbMode.HEARING -> 1f + 0.15f * pulse; OrbMode.SPEAKING -> 1f + 0.1f * pulse; else -> 1f }
             scaleX = scale; scaleY = scale
+            alpha = if (mode == OrbMode.OFF) 0.45f else 1f
         }) {
             val path = sparklePath(size)
             val brush: Brush = if (mode == OrbMode.ALERT) Brush.linearGradient(listOf(AppTheme.safety, AppTheme.safety)) else AppTheme.gradient
@@ -111,4 +113,22 @@ fun DrawScope.chevronGlyph(pointsLeft: Boolean, color: Color) {
     val x0 = if (pointsLeft) w / 2 + dx / 2 else w / 2 - dx / 2; val x1 = if (pointsLeft) w / 2 - dx / 2 else w / 2 + dx / 2
     drawPath(Path().apply { moveTo(x0, h / 2 - dy); lineTo(x1, h / 2); lineTo(x0, h / 2 + dy) }, color,
         style = Stroke(1.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+}
+
+/** Microphone: on, crossed out when off, a waveform while it hears speech. */
+fun DrawScope.micGlyph(on: Boolean, hearing: Boolean, color: Color) {
+    val w = size.width; val h = size.height; val stroke = Stroke(1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+    if (hearing) {
+        val bars = listOf(0.25f, 0.55f, 0.85f, 0.55f, 0.25f)
+        bars.forEachIndexed { i, b ->
+            val x = w * (0.2f + 0.15f * i)
+            drawLine(color, Offset(x, h / 2 - h * b * 0.35f), Offset(x, h / 2 + h * b * 0.35f), 1.8.dp.toPx(), StrokeCap.Round)
+        }
+        return
+    }
+    drawRoundRect(color, Offset(w * 0.38f, h * 0.12f), Size(w * 0.24f, h * 0.46f), androidx.compose.ui.geometry.CornerRadius(w * 0.12f), style = stroke)
+    drawArc(color, 0f, 180f, false, Offset(w * 0.26f, h * 0.3f), Size(w * 0.48f, h * 0.42f), style = stroke)
+    drawLine(color, Offset(w / 2, h * 0.72f), Offset(w / 2, h * 0.86f), 1.6.dp.toPx(), StrokeCap.Round)
+    drawLine(color, Offset(w * 0.36f, h * 0.86f), Offset(w * 0.64f, h * 0.86f), 1.6.dp.toPx(), StrokeCap.Round)
+    if (!on) drawLine(color, Offset(w * 0.15f, h * 0.12f), Offset(w * 0.85f, h * 0.88f), 1.6.dp.toPx(), StrokeCap.Round)
 }

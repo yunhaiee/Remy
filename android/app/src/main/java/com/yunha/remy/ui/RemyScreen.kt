@@ -62,39 +62,120 @@ import com.yunha.remy.core.Point2
 private val HAND_EDGES = listOf(0 to 1, 1 to 2, 2 to 3, 3 to 4, 0 to 5, 5 to 6, 6 to 7, 7 to 8, 5 to 9, 9 to 10, 10 to 11, 11 to 12,
     9 to 13, 13 to 14, 14 to 15, 15 to 16, 13 to 17, 17 to 18, 18 to 19, 19 to 20, 0 to 17)
 
-/** The iPhone landscape screen (ContentView.swift): full-bleed camera, overlay, pill, drawer, dock. */
+/** What the screen can ask the app to do; MainActivity implements it. */
+interface RemyActions {
+    fun toggleVideo()
+    fun toggleMic()
+    fun primary()
+    fun rescanHazards()
+    fun setResolution(height: Int)
+    fun setHandsFree(on: Boolean)
+    fun textTest()
+    fun describeCamera()
+    fun reset()
+}
+
+/** LandscapeChrome in GlassControlDock.swift: 43.5 dp circles inside 54 dp touch targets, 6 dp apart. */
+private object Chrome {
+    val controlDiameter = (58 * 0.75).dp
+    val touchSize = 54.dp
+    val controlGap = 6.dp
+    val dockWidth = touchSize * 3 + controlGap * 2
+    val pillWidth = dockWidth - (touchSize - controlDiameter)
+}
+
+/**
+ * The iPhone landscape screen (ContentView.swift, landscape branch): full-bleed camera and overlay, the guidance pill
+ * top centre (tap: Session), the Gemma drawer on the left edge, and one bottom row: the dock (video, microphone,
+ * sparkle) at the left, the primary action in the middle, Session and Settings at the right.
+ */
 @Composable
-fun RemyScreen(state: RemyState, preview: PreviewView, onToggleVideo: () -> Unit, onLookAgain: () -> Unit, onResolution: (Int) -> Unit) {
+fun RemyScreen(state: RemyState, preview: PreviewView, actions: RemyActions, session: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().background(AppTheme.background)) {
         if (state.videoOn) AndroidView({ preview }, Modifier.fillMaxSize())
         CameraOverlay(state, Modifier.fillMaxSize())
+        if (state.planning) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) { PlanningCard(state) }
+        }
 
-        GuidancePill(state, Modifier.align(Alignment.TopCenter).padding(top = 14.dp, start = 96.dp, end = 96.dp))
-        AgentDrawer(state, Modifier.align(Alignment.CenterStart))
-
-        Row(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            DockButton(onToggleVideo) { videoGlyph(state.videoOn, AppTheme.text) }
-            DockButton(onLookAgain) { lookAgainGlyph(AppTheme.text) }
-            DockButton({ state.drawerOpen = !state.drawerOpen }) {
-                val path = sparklePath(Size(size.width * 0.6f, size.height * 0.6f)).apply { translate(Offset(size.width * 0.2f, size.height * 0.2f)) }
-                drawPath(path, AppTheme.text, style = Stroke(1.6.dp.toPx()))
+        Column(Modifier.fillMaxSize()) {
+            GuidancePill(state, Modifier.align(Alignment.CenterHorizontally).padding(top = 14.dp, start = 24.dp, end = 24.dp)
+                .clickable(remember { MutableInteractionSource() }, null) { state.sessionOpen = true })
+            Spacer(Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Chrome.controlGap)) {
+                    DockButton(actions::toggleVideo) { videoGlyph(state.videoOn, Color.White) }
+                    DockButton(actions::toggleMic) { micGlyph(state.listenerOn || state.recording, state.hearing, Color.White) }
+                    DockButton({ state.drawerOpen = !state.drawerOpen }) {
+                        val path = sparklePath(Size(size.width * 0.72f, size.height * 0.72f)).apply { translate(Offset(size.width * 0.14f, size.height * 0.14f)) }
+                        drawPath(path, Color.White, style = Stroke(1.6.dp.toPx()))
+                    }
+                }
+                Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
+                PrimaryAction(state, actions::primary)
+                Spacer(Modifier.weight(1f).widthIn(min = 12.dp))
+                Row(Modifier.width(Chrome.dockWidth), horizontalArrangement = Arrangement.spacedBy(Chrome.controlGap), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(Chrome.touchSize * 2 + Chrome.controlGap).height(Chrome.touchSize)
+                        .clickable(remember { MutableInteractionSource() }, null) { state.sessionOpen = true }, contentAlignment = Alignment.Center) {
+                        Box(Modifier.width(Chrome.touchSize * 2 + Chrome.controlGap - (Chrome.touchSize - Chrome.controlDiameter)).height(Chrome.controlDiameter)
+                            .glass(RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
+                            AppText("Session", appText(14.sp, FontWeight.Medium, Color.White), maxLines = 1)
+                        }
+                    }
+                    DockButton({ state.settingsOpen = true }) { gearGlyph(Color.White) }
+                }
             }
         }
-        Box(Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 14.dp)) {
-            DockButton({ state.settingsOpen = true }) { gearGlyph(AppTheme.text) }
-        }
-        StatusStrip(state, Modifier.align(Alignment.BottomCenter).padding(bottom = 26.dp, start = 80.dp, end = 180.dp))
+        if (state.isLoaded || state.activity.entries.isNotEmpty()) AgentDrawer(state, Modifier.align(Alignment.CenterStart))
+        StatusStrip(state, Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp, start = 200.dp, end = 200.dp))
 
-        if (state.settingsOpen) SettingsSheet(state, onResolution)
+        if (state.sessionOpen) SheetFrame("Your session", { state.sessionOpen = false }) { session() }
+        if (state.settingsOpen) SettingsSheet(state, actions)
+        if (state.evidenceOpen) EvidenceSheet(state)
     }
 }
 
-/** A 44 dp glass circle around a line glyph. */
+/** A 43.5 dp glass circle around a line glyph, inside a 54 dp touch target (FrostedControlStyle). */
 @Composable
 private fun DockButton(onTap: () -> Unit, glyph: DrawScope.() -> Unit) {
-    Box(Modifier.size(44.dp).glass(CircleShape).clickable(remember { MutableInteractionSource() }, null, onClick = onTap),
-        contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(22.dp)) { glyph() }
+    Box(Modifier.size(Chrome.touchSize).clickable(remember { MutableInteractionSource() }, null, onClick = onTap), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(Chrome.controlDiameter).glass(CircleShape), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.size(20.dp)) { glyph() }
+        }
+    }
+}
+
+/** PrimaryAction(compact: true): the Gemma gradient capsule, pill-width, one line of 14 sp medium white. */
+@Composable
+private fun PrimaryAction(state: RemyState, onTap: () -> Unit) {
+    Box(Modifier.width(Chrome.dockWidth).height(Chrome.touchSize)
+        .clickable(remember { MutableInteractionSource() }, null, enabled = state.primaryEnabled, onClick = onTap), contentAlignment = Alignment.Center) {
+        Box(Modifier.width(Chrome.pillWidth).height(Chrome.controlDiameter).alpha(if (state.primaryEnabled) 1f else 0.45f)
+            .background(AppTheme.gradient, RoundedCornerShape(50)).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+            AppText(if (!state.isLoaded && !state.isLoading) "Set up Remy" else state.primaryTitle, appText(14.sp, FontWeight.Medium, Color.White), maxLines = 1)
+        }
+    }
+}
+
+/** PlanningCard (AgentDrawer.swift): over the dimmed camera while Gemma writes the recipe. */
+@Composable
+private fun PlanningCard(state: RemyState) {
+    Column(Modifier.width(440.dp).glass(RoundedCornerShape(22.dp)).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            VoiceOrb(OrbMode.THINKING)
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Eyebrow("Gemma is writing the recipe")
+                AppText(state.planningDish.replaceFirstChar { it.uppercase() }, appText(22.sp, FontWeight.Medium))
+            }
+        }
+        if (state.planIngredients.isNotEmpty()) AppText(state.planIngredients.joinToString(" · "), appText(15.sp), maxLines = 2)
+        else AppText("Choosing the ingredients…", appText(15.sp, color = AppTheme.secondary))
+        if (state.planSteps.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val shown = state.planSteps.takeLast(5)
+            shown.forEachIndexed { offset, step ->
+                AppText(String.format("%02d  %s", state.planSteps.size - shown.size + offset + 1, step), appText(12.sp, color = AppTheme.secondary), maxLines = 1)
+            }
+        }
     }
 }
 
@@ -115,7 +196,21 @@ private fun CameraOverlay(state: RemyState, modifier: Modifier) {
             if (alerting) drawRoundRect(AppTheme.safety.copy(alpha = 0.25f), rect.topLeft, rect.size, corner)
             drawRoundRect(AppTheme.safety, rect.topLeft, rect.size, corner,
                 style = Stroke((if (alerting) 4f else 2.5f).dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(), 5.dp.toPx()))))
-            tag(measurer, "Hot surface", rect, AppTheme.safety, AppTheme.onSafety)
+            tag(measurer, "Hot Surface", rect, AppTheme.safety, AppTheme.onSafety)
+        }
+        state.knifeBox?.let { box ->
+            val rect = Rect(px(Point2(box.x, box.y)), px(Point2(box.x + box.width, box.y + box.height)))
+            val corner = CornerRadius(6.dp.toPx())
+            if (state.knifeAlert) drawRoundRect(AppTheme.warning.copy(alpha = 0.22f), rect.topLeft, rect.size, corner)
+            drawRoundRect(AppTheme.warning, rect.topLeft, rect.size, corner,
+                style = Stroke((if (state.knifeAlert) 4f else 2.5f).dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(), 5.dp.toPx()))))
+            tag(measurer, if (state.knifeRecovering) "Knife · reacquiring" else "Knife", rect, AppTheme.warning, AppTheme.background)
+        }
+        state.presentedBox?.let { box ->
+            val rect = Rect(px(Point2(box.x, box.y)), px(Point2(box.x + box.width, box.y + box.height)))
+            drawRoundRect(AppTheme.accentLight, rect.topLeft, rect.size, CornerRadius(10.dp.toPx()),
+                style = Stroke(2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))))
+            if (box.label.isNotEmpty()) tag(measurer, box.label, rect, AppTheme.accentLight, AppTheme.background)
         }
         if (state.objectBoxes) for (box in state.boxes) {
             val rect = Rect(px(Point2(box.x, box.y)), px(Point2(box.x + box.width, box.y + box.height)))
@@ -148,7 +243,14 @@ private fun GuidancePill(state: RemyState, modifier: Modifier) {
         .then(if (alerting) Modifier.border(1.5.dp, AppTheme.safety, shape) else Modifier)
         .padding(start = 12.dp, end = 22.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        VoiceOrb(if (alerting) OrbMode.ALERT else if (state.working) OrbMode.THINKING else OrbMode.IDLE)
+        VoiceOrb(when {
+            alerting -> OrbMode.ALERT
+            !state.listenerOn -> if (state.working || state.isBusy || state.understanding) OrbMode.THINKING else OrbMode.OFF
+            state.speaking -> OrbMode.SPEAKING
+            state.hearing -> OrbMode.HEARING
+            state.working || state.isBusy || state.understanding -> OrbMode.THINKING
+            else -> OrbMode.LISTENING
+        })
         AppText(state.line.ifBlank { "Ready when you are." }, appText(17.sp, color = Color.White), Modifier.weight(1f, fill = false), maxLines = 3)
         when {
             state.reflexMs != null -> AppText(String.format("Reflex %.0f ms", state.reflexMs), appText(12.sp, FontWeight.Medium, AppTheme.safety), maxLines = 1)

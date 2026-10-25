@@ -58,7 +58,7 @@ import kotlinx.coroutines.withContext
  * verified) names and boxes what could be hot; MediaPipe hands (LiteRT) feed the HazardWatch port on every frame, with
  * no model call, and the pill shows the frame-to-alarm time. No voice input, recipes or tools.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), com.yunha.remy.ui.RemyActions {
     private val state = RemyState()
     private lateinit var preview: PreviewView
     private val analysis = Executors.newSingleThreadExecutor()
@@ -91,8 +91,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         preview = PreviewView(this).apply { scaleType = PreviewView.ScaleType.FILL_CENTER }
         setContent {
-            RemyScreen(state, preview, onToggleVideo = ::toggleVideo, onLookAgain = ::lookAgain,
-                onResolution = { state.handResolution = it; startCamera() })
+            RemyScreen(state, preview, this, session = { com.yunha.remy.ui.AppText("Tell me what we're making.", com.yunha.remy.ui.appText(androidx.compose.ui.unit.TextUnit(17f, androidx.compose.ui.unit.TextUnitType.Sp))) })
         }
         reflex.prepare()
 
@@ -108,11 +107,12 @@ class MainActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             ExperimentalFlags.enableBenchmark = true
-            state.line = "Loading Gemma 4 E2B…"; state.working = true
+            state.line = "Loading Gemma 4 E2B…"; state.working = true; state.isLoading = true; state.primaryTitle = "Loading Gemma…"
             val entry = state.activity.begin(Kind.GEMMA, "Loading Gemma 4 E2B")
             val loaded = runCatching { TensorLmLoader.load(this@MainActivity) }
-            state.working = false
+            state.working = false; state.isLoading = false
             loaded.onSuccess { lm ->
+                state.isLoaded = true; state.primaryTitle = "Plan ingredients"; state.status = "Say Remy, then what we're making."
                 gemma = GemmaHazards(lm)
                 val npu = lm.path == TensorLmLoader.Path.NPU
                 state.onNpu = npu
@@ -174,7 +174,19 @@ class MainActivity : ComponentActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
-    private fun toggleVideo() {
+    override fun toggleMic() {
+        if (!state.isLoaded) { state.settingsOpen = true; return }
+        setHandsFree(!state.handsFree)
+    }
+    override fun setHandsFree(on: Boolean) { state.handsFree = on; state.listenerOn = on }
+    override fun primary() { if (!state.isLoaded) state.settingsOpen = true else state.sessionOpen = true }
+    override fun rescanHazards() = lookAgain()
+    override fun setResolution(height: Int) { state.handResolution = height; startCamera() }
+    override fun textTest() {}
+    override fun describeCamera() {}
+    override fun reset() {}
+
+    override fun toggleVideo() {
         if (state.videoOn) {
             ProcessCameraProvider.getInstance(this).get().unbindAll()
             state.videoOn = false; state.hands = emptyList(); latestFrame = null; clearAlarm()

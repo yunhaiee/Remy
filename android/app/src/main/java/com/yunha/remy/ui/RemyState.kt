@@ -60,15 +60,66 @@ class RemyState {
     var reflexMs by mutableStateOf<Double?>(null)
     var working by mutableStateOf(false)
 
+    var knifeBox by mutableStateOf<ItemBox?>(null)
+    var knifeAlert by mutableStateOf(false)
+    var knifeRecovering by mutableStateOf(false)
+    /** The careful-ingredient crop Gemma is checking, in normalized image space. */
+    var presentedBox by mutableStateOf<ItemBox?>(null)
+
     // Chrome.
     var drawerOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
+    var sessionOpen by mutableStateOf(false)
+    var evidenceOpen by mutableStateOf(false)
+    var stepsOpen by mutableStateOf(false)
 
-    // Settings.
+    // Model and the bottom action (PrimaryAction in ContentView.swift).
+    var isLoaded by mutableStateOf(false)
+    var isLoading by mutableStateOf(false)
+    var isBusy by mutableStateOf(false)
+    var planning by mutableStateOf(false)
+    var planningDish by mutableStateOf("")
+    var planIngredients by mutableStateOf<List<String>>(emptyList())
+    var planSteps by mutableStateOf<List<String>>(emptyList())
+    var primaryTitle by mutableStateOf("Set up Remy")
+    var primaryEnabled by mutableStateOf(true)
+    var dishRequest by mutableStateOf("")
+    var status by mutableStateOf("Loading Gemma…")
+    var rawResponse by mutableStateOf("")
+    var lastHeard by mutableStateOf("")
+    var smokePassed by mutableStateOf(false)
+    /** Bumped whenever the cooking session changes, so session views recompose. */
+    var sessionVersion by mutableIntStateOf(0)
+
+    // Voice.
+    var listenerOn by mutableStateOf(false)
+    var hearing by mutableStateOf(false)
+    var speaking by mutableStateOf(false)
+    var recording by mutableStateOf(false)
+    var understanding by mutableStateOf(false)
+    var speechPath by mutableStateOf("not started")
+
+    // Settings, in the iPhone order.
+    var handsFree by mutableStateOf(true)
+    var automaticChecks by mutableStateOf(false)
     var objectBoxes by mutableStateOf(true)
     var safetyAlerts by mutableStateOf(true)
+    var knifeTracking by mutableStateOf(true)
     var spokenResponses by mutableStateOf(true)
+    var shortRecipes by mutableStateOf(true)
+    var demoPreset by mutableStateOf(true)
+    var gestures by mutableStateOf(true)
+    var constrainedDecoding by mutableStateOf(false)
     var handResolution by mutableIntStateOf(480)
+    var gestureModel by mutableStateOf("not loaded")
+    var detectorModel by mutableStateOf("not loaded")
+
+    // This session's tally, counted where each call returns.
+    var gemmaCalls by mutableIntStateOf(0)
+    var toolCalls by mutableIntStateOf(0)
+    var visionChecks by mutableIntStateOf(0)
+    var boxCount by mutableIntStateOf(0)
+    var audioCalls by mutableIntStateOf(0)
 
     // Evidence, all from live values.
     var lmBackend by mutableStateOf<String?>(null)
