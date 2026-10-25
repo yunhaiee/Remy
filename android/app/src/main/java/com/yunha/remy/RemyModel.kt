@@ -9,6 +9,7 @@ import com.yunha.remy.agent.ChefAgent
 import com.yunha.remy.agent.GemmaRunner
 import com.yunha.remy.agent.StepGate
 import com.yunha.remy.agent.ToolCall
+import com.yunha.remy.core.ChefObservation
 import com.yunha.remy.core.ChefPrompt
 import com.yunha.remy.core.ChefWakeGate
 import com.yunha.remy.core.CookingReadinessReply
@@ -17,7 +18,11 @@ import com.yunha.remy.core.EvidenceOrigin
 import com.yunha.remy.core.GemmaTask
 import com.yunha.remy.core.HeardAnswer
 import com.yunha.remy.core.IngredientCheck
+import com.yunha.remy.core.IngredientConfirmation
 import com.yunha.remy.core.IngredientDraft
+import com.yunha.remy.core.IngredientPresentationCue
+import com.yunha.remy.core.IngredientVisualIdentity
+import com.yunha.remy.core.IngredientVisualVerification
 import com.yunha.remy.core.ItemBox
 import com.yunha.remy.core.JSONOutputContract
 import com.yunha.remy.core.PantryStatus
@@ -65,6 +70,8 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
     private var startWhenRecipeReady = false
     private var readyPromptSession: String? = null
     private var preparing = false
+    private var lastReview = 0L
+    private var lastConcern = "" to 0L
     private val sessionFile = File(context.filesDir, "session.json")
 
     // ---- Lifecycle ---------------------------------------------------------------------------------------------
@@ -76,6 +83,14 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
         changed(save = false)
         if (state.handsFree) listener.start()
         if (session.instructionsPending) schedulePreparation()
+        // "Watch the board automatically": a quiet glance every 10 s while a do-step is on screen.
+        scope.launch {
+            while (true) {
+                delay(2000)
+                if (state.automaticChecks && session.phase == CookingSession.Phase.COOKING && session.step?.kind == RecipeStep.Kind.DO &&
+                    !session.isComplete && !state.isBusy && SystemClock.elapsedRealtime() - lastReview > 10_000) reviewBoard(spoken = false)
+            }
+        }
         return r
     }
 
@@ -298,6 +313,10 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
         val jpeg = host.latestJpeg() ?: run { say("I can't see the counter yet. Point the camera at it."); return "The camera has no picture yet." }
         state.isBusy = true; state.understanding = true; syncPrimary()
         state.line = "Thinking…"
+        // The iPhone path first: name the one food held up, blind, then verify a closer crop.
+        try {
+            presented(jpeg, plan)?.let { return it }
+        } catch (e: Throwable) { Log.e(TAG, "REMY_PRESENTED failed", e) }
         val entry = state.activity.begin(Kind.VISION, "Checking ingredients", "${plan.ingredients.size} on the list")
         val revision = session.revision; val id = session.id
         try {
@@ -330,6 +349,57 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
             Log.e(TAG, "REMY_INGREDIENTS failed", e)
             return null
         } finally { state.isBusy = false; state.understanding = false; syncPrimary() }
+    }
+
+    /**
+     * ChefBrain.presentedIngredient: identify the single food presented closest to the camera without the cook's
+     * words, then inspect a tighter crop; only a corroborated identity that is on the list marks it ready.
+     * Returns the tool result, or null when nothing single was presented (the whole-list check runs instead).
+     */
+    private suspend fun presented(jpeg: ByteArray, plan: RecipePlan): String? {
+        val entry = state.activity.begin(Kind.VISION, "What is being shown?", "blind identity, then a closer crop")
+        val first = withContext(Dispatchers.IO) { run(ChefPrompt.presentedIngredient,
+            "Identify the single food being held up or presented closest to the camera. Give its visible distinguishing features, actual name and box. If no clear single ingredient is presented, return unknown and an empty box.", jpeg) }
+        val identity = runCatching { IngredientVisualIdentity.decode(JSONOutputContract.clean(first.text)) }.getOrNull()
+        val box = identity?.box
+        if (identity == null || !identity.isSupported || box == null) {
+            Log.i(TAG, "REMY_PRESENTED ${first.ms} ms no single ingredient \"${first.text.take(80)}\"")
+            state.activity.finish(entry, "no single ingredient presented", first.ms.toDouble()); return null
+        }
+        state.presentedBox = ItemBox(identity.name, box.x, box.y, box.width, box.height); state.boxCount++
+        val crop = withContext(Dispatchers.Default) { crop(jpeg, box) }
+        if (crop == null) { state.activity.finish(entry, "${identity.name} · crop too small", first.ms.toDouble()); return null }
+        val second = withContext(Dispatchers.IO) { run(ChefPrompt.verifyPresentedIngredient,
+            "Inspect this closer crop. An earlier visual pass suggested ${identity.name}. Independently decide if that identity is supported. Name what is ACTUALLY visible; reject the suggestion if a look-alike or unclear. Do not infer from what a cook says.", crop) }
+        val verification = runCatching { IngredientVisualVerification.decode(JSONOutputContract.clean(second.text)) }.getOrNull()
+        val ms = (first.ms + second.ms).toDouble()
+        val match = verification?.let { identity.confirmedIngredient(plan.ingredients, it) }
+        Log.i(TAG, "REMY_PRESENTED ${first.ms}+${second.ms} ms ${identity.name} verified=${verification?.matches} → ${match?.name}")
+        scope.launch { delay(4000); state.presentedBox = null }
+        if (match == null) {
+            state.activity.finish(entry, "${identity.name} · " + if (verification?.matches == true) "not on the list" else "not confirmed", ms)
+            val line = if (verification?.matches == true) "That looks like ${identity.name}, which isn't on the list." else "I'm not sure what that is. Hold it a little closer."
+            say(line); changed(save = false)
+            return "The camera shows ${identity.name}" + if (verification?.matches == true) ", which is not on the list." else ", not confirmed."
+        }
+        session.setPantry(match.id, PantryStatus.SEEN)
+        state.activity.finish(entry, "${match.name} · verified on a closer crop", ms)
+        changed()
+        val left = plan.ingredients.filter { session.pantry[it.id]?.status != PantryStatus.SEEN }.map { it.name }
+        say("Got it, ${match.name}." + if (left.isEmpty()) "" else " Next, ${left.first()}.")
+        offerCookingIfReady()
+        return "Marked ${match.name} as ready. " + if (left.isEmpty()) "Every ingredient is ready." else "Still needed: ${left.joinToString()}."
+    }
+
+    private fun crop(jpeg: ByteArray, box: ItemBox): ByteArray? {
+        val bitmap = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return null
+        val w = bitmap.width; val h = bitmap.height
+        val left = ((box.x - 0.035) * w).toInt().coerceIn(0, w); val top = ((box.y - 0.035) * h).toInt().coerceIn(0, h)
+        val right = ((box.x + box.width + 0.035) * w).toInt().coerceIn(0, w); val bottom = ((box.y + box.height + 0.035) * h).toInt().coerceIn(0, h)
+        if (right - left < 16 || bottom - top < 16) return null
+        val out = java.io.ByteArrayOutputStream()
+        android.graphics.Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top).compress(android.graphics.Bitmap.CompressFormat.JPEG, 94, out)
+        return out.toByteArray()
     }
 
     fun cyclePantry(id: String) {
@@ -421,6 +491,20 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
         }
         if (session.phase == CookingSession.Phase.COOKING && session.suggestedCompletion && session.step?.kind == RecipeStep.Kind.DO &&
             CookingReadinessReply.parse(addressed) == CookingReadinessReply.Decision.READY) { nextStep(); return }
+        val plan = session.plan
+        if (session.phase == CookingSession.Phase.INGREDIENTS && plan != null && IngredientPresentationCue.parse(addressed, plan.ingredients) != null) {
+            state.activity.log(Kind.HEARD, "\u201c$heard\u201d", "$source → ingredient shown", ms)
+            checkIngredients(); return
+        }
+        if (session.phase == CookingSession.Phase.INGREDIENTS && plan != null && !heard.contains("?")) {
+            IngredientConfirmation.parse(addressed, plan.ingredients)?.let { c ->
+                state.activity.log(Kind.HEARD, "\u201c$heard\u201d", "$source → ${c.status.raw}", ms)
+                if (c.status == PantryStatus.SEEN) { checkIngredients(); return }
+                session.setPantry(c.ingredientID, c.status); changed()
+                say("Marked ${plan.ingredients.firstOrNull { it.id == c.ingredientID }?.name ?: c.ingredientID} as missing.")
+                return
+            }
+        }
         val command = VoiceCommand.parse("Hey Remy $addressed", session.phase, 60.0)
         session.record("Heard \"$heard\" → ${command.intent.name.lowercase()}", EvidenceOrigin.USER)
         Log.i(TAG, String.format("REMY_HEARD %s %.0f ms \"%s\" → %s", source, ms, heard, command.intent.name.lowercase()))
@@ -580,7 +664,7 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
                 "next_step" -> { if (session.step?.kind == RecipeStep.Kind.ASK) announceStep() else nextStep(); "" }
                 "previous_step" -> { selectStep(maxOf(0, session.currentStep - 1)); "" }
                 "repeat_step" -> { announceStep(); "" }
-                "check_step" -> look("Is this step done: ${session.step?.title ?: ""}? ${session.step?.doneWhen ?: ""}") ?: ""
+                "check_step" -> { reviewBoard(spoken = true); "" }
                 "look" -> look(arg("question").ifEmpty { heard }) ?: ""
                 "find" -> if (arg("item").isEmpty()) "" else { find(arg("item")); "" }
                 "save_preference" -> if (arg("value").isEmpty()) "" else { session.answer(arg("value"), heard, EvidenceOrigin.USER); changed(); announceStep("Got it, ${arg("value")}."); "" }
@@ -593,6 +677,52 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
                 else -> { Log.w(TAG, "REMY_AGENT ignored tool ${call.name}"); "" }
             }
         } finally { state.isBusy = wasBusy }
+    }
+
+    /** AppModel.reviewBoard: a one-frame glance (or the full check on a guarded step), applied to the session. */
+    suspend fun reviewBoard(spoken: Boolean) {
+        if (!state.isLoaded || state.isBusy || session.phase != CookingSession.Phase.COOKING || session.step?.kind != RecipeStep.Kind.DO) return
+        val jpeg = host.latestJpeg() ?: return
+        lastReview = SystemClock.elapsedRealtime()
+        val guarded = session.step?.isGuarded == true
+        val revision = session.revision; val id = session.id
+        state.isBusy = true; syncPrimary()
+        state.status = "Gemma is checking the board…"
+        val entry = state.activity.begin(Kind.VISION, if (spoken) "Checking the step" else "Glance at the board")
+        try {
+            val task = if (guarded) ChefPrompt.board else ChefPrompt.glance
+            val prompt = ChefPrompt.make(session, 1, 0.0)
+            val result = withContext(Dispatchers.IO) { run(task, prompt, jpeg) }
+            val observation = runCatching { if (guarded) ChefObservation.decode(result.text) else glance(result.text) }.getOrNull()
+                ?: run { state.activity.finish(entry, "reply unreadable", result.ms.toDouble(), failed = true); return }
+            state.activity.finish(entry, "${observation.concern} · ${observation.line}", result.ms.toDouble())
+            Log.i(TAG, "REMY_BOARD ${result.ms} ms ${observation.concern} complete=${observation.stepComplete} \"${observation.line}\"")
+            if (!session.apply(observation, id, revision, 0.5, 1)) { state.status = "Scene changed during the check. Discarded old result."; return }
+            changed()
+            state.status = if (observation.confidence < 0.7) "Gemma is uncertain. Check the evidence." else "Board checked locally."
+            val now = SystemClock.elapsedRealtime()
+            val mistake = observation.concern in setOf("size", "knife")
+            val repeated = observation.concern == lastConcern.first && now - lastConcern.second < 30_000
+            if ((spoken || (mistake && !repeated)) && observation.confidence >= 0.7 && state.reflexMs == null) {
+                say(observation.line)
+                if (mistake) lastConcern = observation.concern to now
+            }
+        } catch (e: Throwable) {
+            state.activity.finish(entry, e.message ?: "failed", failed = true)
+        } finally { state.isBusy = false; syncPrimary() }
+    }
+
+    /** ChefBrain.glanceObservation: a glance has no evidence sentence; 0.85 lets stepComplete surface only as a suggestion. */
+    private fun glance(text: String): ChefObservation {
+        val o = JSONObject(JSONOutputContract.clean(text))
+        val concern = o.getString("concern").trim().lowercase()
+        val line = o.getString("line").trim()
+        require(concern in setOf("none", "size", "knife", "visibility", "uncertain")) { "concern is outside the allowed list" }
+        require(line.isNotEmpty() && line.length <= 240) { "line is empty or too long" }
+        val observation = ChefObservation(confidence = 0.85, stepComplete = o.getBoolean("stepComplete"), concern = concern,
+            evidence = "Quick glance: ${if (concern == "none") "looks right" else concern}", line = line)
+        require(observation.isValid) { "invalid observation" }
+        return observation
     }
 
     // ---- Camera questions --------------------------------------------------------------------------------------
