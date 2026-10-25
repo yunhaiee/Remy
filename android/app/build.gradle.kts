@@ -25,6 +25,7 @@ android {
     }
     // The hand landmarker task is the same pinned bundle the iPhone app ships.
     sourceSets["main"].assets.srcDir("../../iOS/Remy/Resources/HandLandmarker")
+    sourceSets["main"].assets.srcDir("../../iOS/Remy/Resources/GestureRecognizer")
     // LiteRT-LM and Google Tensor dispatch find native libraries in
     // context.applicationInfo.nativeLibraryDir, so extract them at install time.
     packaging { jniLibs { useLegacyPackaging = true } }

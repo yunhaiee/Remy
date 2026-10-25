@@ -34,6 +34,17 @@ class GemmaHazards(private val lm: TensorLmLoader.LoadedLm) {
         return Scan(zones, names, hazards, locate)
     }
 
+    /** markHot: box items Gemma or the cook named as hot, without the naming call. */
+    fun locateHot(names: List<String>, jpeg: ByteArray): Pair<List<HazardZone>, Call> {
+        val locate = run(null, locatePrompt(names), jpeg, maxTokens = 24 + 32 * names.size)
+        val zones = mutableListOf<HazardZone>()
+        for (box in ItemBox.parse(locate.text)) {
+            val zone = HazardZone(box, if (names.size == 1) names[0] else box.label.ifEmpty { names[0] })
+            if (zones.none { it.overlaps(zone) }) zones.add(zone)
+        }
+        return zones to locate
+    }
+
     @OptIn(ExperimentalApi::class)
     private fun run(system: String?, prompt: String, jpeg: ByteArray, maxTokens: Int): Call {
         val config = ConversationConfig(
