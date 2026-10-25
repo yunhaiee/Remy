@@ -83,15 +83,15 @@ fun SessionContent(state: RemyState, model: RemyModel) {
             CookingSession.Phase.INGREDIENTS -> {
                 val plan = session.plan
                 val ready = plan?.ingredients?.count { session.pantry[it.id]?.status == PantryStatus.SEEN } ?: 0
-                item {
+                item(key = "ready$ready") {
                     Row(Modifier.fillMaxWidth()) {
                         Eyebrow(plan?.dish ?: "", AppTheme.secondary); Spacer(Modifier.weight(1f)); Eyebrow("$ready of ${plan?.ingredients?.size ?: 0} ready", AppTheme.secondary)
                     }
                 }
                 item { AppText("Show me your ingredients", appText(26.sp, tracking = (-0.4).sp)) }
                 plan?.ingredients?.forEach { ingredient ->
+                    val pantry = session.pantry[ingredient.id]
                     item(key = ingredient.id) {
-                        val pantry = session.pantry[ingredient.id]
                         val (text, color) = when (pantry?.status) {
                             PantryStatus.SEEN -> "Have it" to AppTheme.accent
                             PantryStatus.MISSING -> "Missing" to AppTheme.warning

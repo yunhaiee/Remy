@@ -136,7 +136,7 @@ class MainActivity : ComponentActivity(), com.yunha.remy.ui.RemyActions, RemyMod
             val loaded = runCatching { TensorLmLoader.load(this@MainActivity) }
             state.working = false; state.isLoading = false
             loaded.onSuccess { lm ->
-                state.isLoaded = true; state.primaryTitle = "Plan ingredients"; state.status = "Say Remy, then what we're making."
+                state.isLoaded = true; state.primaryTitle = "Plan ingredients"
                 gemma = GemmaHazards(lm)
                 runner = model.attach(lm)
                 val npu = lm.path == TensorLmLoader.Path.NPU

@@ -80,6 +80,11 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
         val r = GemmaRunner(lm); runner = r; agent = ChefAgent(r)
         state.isLoaded = true
         state.chefLineIdle()
+        state.status = when (session.phase) {
+            CookingSession.Phase.NEEDS_DISH -> "Say Remy or Hey Remy."
+            CookingSession.Phase.INGREDIENTS -> "Show me an ingredient. Open Session to correct the checklist."
+            CookingSession.Phase.COOKING -> "Listening. Ask a question or tell me when you’re done."
+        }
         changed(save = false)
         if (state.handsFree) listener.start()
         if (session.instructionsPending) schedulePreparation()
@@ -403,6 +408,7 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
     }
 
     fun cyclePantry(id: String) {
+        Log.i(TAG, "REMY_PANTRY tap $id")
         session.setPantry(id, if (session.pantry[id]?.status == PantryStatus.SEEN) PantryStatus.MISSING else PantryStatus.SEEN)
         if (!session.ingredientsCollected) readyPromptSession = null
         changed(); offerCookingIfReady()

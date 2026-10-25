@@ -41,7 +41,15 @@ Built for the Google Gemma Hardware Hackathon (AGI House, Oct 24, 2026 · Mobile
 
 ## The reflex loop on Pixel
 
-`android/` is one screen that runs the two loops on a Google Pixel: Gemma 4 E2B on the Tensor TPU names and boxes what could be hot, and MediaPipe hands feed a Kotlin port of `HazardWatch` on every frame, with no model call. Same prompts, same geometry, same palette. No voice, recipes or tools.
+`android/` is one screen that runs the two loops on a Google Pixel: Gemma 4 E2B on the Tensor TPU names and boxes what could be hot, and MediaPipe hands feed a Kotlin port of `HazardWatch` on every frame, with no model call. Same prompts, same geometry, same palette.
+
+On branch `android/full-port` the Pixel build also carries the iPhone app's cooking flow, in the same landscape layout (pill top centre, Gemma drawer on the left edge, dock with video, microphone and sparkle bottom left, the primary action in the middle, Session and Settings bottom right):
+
+- Recipe: dish → Gemma ingredient draft (or the pasta-salad preset) → checklist → Gemma instructions → step by step. The session is saved to app files and restored at launch. `core/` is a Kotlin port of RemyCore with 97 JUnit tests.
+- Voice: Android's on-device `SpeechRecognizer` (en-US, prefer offline) behind the same "Remy" / "Hey Remy" wake gate; when Remy has asked a question, the answer is recorded at 16 kHz and Gemma hears it (`Content.AudioBytes`). Without on-device recognition, Gemma transcribes the audio.
+- Agent: the 16 tools from `ChefAgent.swift`, automatic tool calling off, the app validates and runs each call; every tool call shows in the drawer with its time.
+- Camera: ingredient presentation check (blind identity, then a closer crop), look, find with `box_2d`, the hazard scan and held 1 s alarm, a knife box with a left-fingertip warning, and thumbs up / thumbs down / open palm through MediaPipe Gesture Recognizer.
+- Not on Android: GoPro input and Core ML detectors (iPhone-only); EfficientDet-Lite0 object boxes (no model bundled, boxes come from Gemma); the iPhone's package-label OCR corroboration; the cooker-power voice commands; the left-hand finger-curl HUD.
 
 | What | How | Pixel 10 (Tensor G5, Android 17), Oct 24 |
 |---|---|---|
@@ -63,7 +71,7 @@ Gemma 4 E2B is a 2B model. It confuses look-alikes (a red bell pepper for a toma
 - `RemyCore/` — pure Swift: recipe contracts and validation, cooking session, hazard and reach watchers, voice commands and wake gate, box parsing. `swift test --package-path RemyCore` runs in seconds.
 - `Vendor/LiteRTLM`, `Vendor/MediaPipeTasks` — pinned packages (`UPSTREAM.json`; `Conversation.clone()` backport and a safe callback adapter).
 - `scripts/` — model and detector download with SHA-256 checks, device build, phone smoke test, simulator prompt eval.
-- `android/` — the Pixel screen: `TensorLmLoader` (from the skill), `GemmaHazards`, `MainActivity` (CameraX + MediaPipe), `core/HazardWatch.kt` and its JUnit tests.
+- `android/` — the Pixel app: `TensorLmLoader` (from the skill), `GemmaHazards`, `MainActivity` (CameraX + MediaPipe), `RemyModel` (recipe, voice and agent flow), `VoiceListener`, `agent/` (GemmaRunner, ChefAgent), `core/` (RemyCore port) and its JUnit tests.
 - `docs/` — [build and demo guide](docs/iphone-build.md), [LiteRT field report](docs/litert-on-iphone.md), [team workflow](docs/team-workflow.md).
 
 Generate the Xcode project from `iOS/project.yml`. Signing and the 2.6 GB model stay local and out of Git.
@@ -113,7 +121,15 @@ Google Gemma 하드웨어 해커톤(AGI House, 2026년 10월 24일 · 모바일 
 
 ## Pixel의 반사 루프
 
-`android/`는 Google Pixel에서 두 루프를 돌리는 화면 하나입니다. Tensor TPU 위의 Gemma 4 E2B가 뜨거울 수 있는 것을 말하고 박스를 그리며, MediaPipe 손 추적이 매 프레임 `HazardWatch`의 Kotlin 포팅에 들어가 모델 호출 없이 비교합니다. 프롬프트, 기하학, 색은 iPhone과 같습니다. 음성, 레시피, 도구는 없습니다.
+`android/`는 Google Pixel에서 두 루프를 돌리는 화면 하나입니다. Tensor TPU 위의 Gemma 4 E2B가 뜨거울 수 있는 것을 말하고 박스를 그리며, MediaPipe 손 추적이 매 프레임 `HazardWatch`의 Kotlin 포팅에 들어가 모델 호출 없이 비교합니다. 프롬프트, 기하학, 색은 iPhone과 같습니다.
+
+`android/full-port` 브랜치의 Pixel 빌드에는 iPhone 앱의 요리 흐름도 같은 가로 화면 배치로 들어 있습니다(위 가운데 알약, 왼쪽 가장자리 Gemma 서랍, 왼쪽 아래 비디오·마이크·반짝임 독, 가운데 주 버튼, 오른쪽 아래 Session과 설정):
+
+- 레시피: 요리 → Gemma 재료 초안(또는 파스타 샐러드 프리셋) → 체크리스트 → Gemma 조리법 → 단계별 진행. 세션은 앱 파일에 저장되고 실행할 때 복원됩니다. `core/`는 RemyCore의 Kotlin 포팅이며 JUnit 테스트 97개가 있습니다.
+- 음성: Android 온디바이스 `SpeechRecognizer`(en-US, 오프라인 우선)를 같은 "Remy" / "Hey Remy" 호출어 게이트 뒤에 두었습니다. Remy가 질문한 직후의 답은 16 kHz로 녹음해 Gemma가 직접 듣습니다(`Content.AudioBytes`). 온디바이스 인식이 없으면 Gemma가 오디오를 받아씁니다.
+- 에이전트: `ChefAgent.swift`의 도구 16개, 자동 도구 호출 끔, 앱이 각 호출을 검증하고 실행합니다. 모든 도구 호출은 걸린 시간과 함께 서랍에 표시됩니다.
+- 카메라: 재료 보여주기 확인(이름 없이 식별 후 더 가까운 크롭으로 확인), 보기, `box_2d`로 찾기, 위험 스캔과 1초 유지 경보, 칼 박스와 왼손 손끝 경고, MediaPipe Gesture Recognizer의 엄지 위·엄지 아래·편 손바닥.
+- Android에 없는 것: GoPro 입력과 Core ML 감지기(iPhone 전용), EfficientDet-Lite0 물체 박스(모델 미포함, 박스는 Gemma가 그림), iPhone의 포장 라벨 OCR 확인, 조리기 전원 음성 명령, 왼손 손가락 굽힘 표시.
 
 | 무엇 | 어떻게 | Pixel 10 (Tensor G5, Android 17), 10월 24일 |
 |---|---|---|
@@ -135,7 +151,7 @@ Gemma 4 E2B는 2B 모델입니다. 비슷한 것을 헷갈리고(빨간 파프�
 - `RemyCore/` — 순수 Swift: 레시피 계약과 검증, 요리 세션, 위험·손뻗음 감시, 음성 명령과 호출어 게이트, 박스 파싱. `swift test --package-path RemyCore`가 몇 초면 끝납니다.
 - `Vendor/LiteRTLM`, `Vendor/MediaPipeTasks` — 고정된 패키지(`UPSTREAM.json`, `Conversation.clone()` 백포트와 안전 콜백 어댑터).
 - `scripts/` — SHA-256 확인이 있는 모델·검출기 다운로드, 기기 빌드, 폰 스모크 테스트, 시뮬레이터 프롬프트 평가.
-- `android/` — Pixel 화면: `TensorLmLoader`(스킬에서 생성), `GemmaHazards`, `MainActivity`(CameraX + MediaPipe), `core/HazardWatch.kt`와 JUnit 테스트.
+- `android/` — Pixel 앱: `TensorLmLoader`(스킬에서 생성), `GemmaHazards`, `MainActivity`(CameraX + MediaPipe), `RemyModel`(레시피·음성·에이전트 흐름), `VoiceListener`, `agent/`(GemmaRunner, ChefAgent), `core/`(RemyCore 포팅)와 JUnit 테스트.
 - `docs/` — [빌드와 데모 안내](docs/iphone-build.md), [LiteRT 현장 보고서](docs/litert-on-iphone.md), [팀 작업 방식](docs/team-workflow.md).
 
 Xcode 프로젝트는 `iOS/project.yml`로 생성합니다. 서명 설정과 2.6 GB 모델은 로컬에만 있고 Git에는 없습니다.
