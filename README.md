@@ -1,157 +1,90 @@
 # Remy
 
-A hands-free cooking coach that runs entirely on an iPhone in airplane mode. Gemma 4 E2B on LiteRT-LM is the judgment: it writes the recipe, looks at the counter, hears your answers and acts on the recipe through function calling. MediaPipe hand tracking on LiteRT is the reflex: a model-free loop that warns the moment a hand reaches a hot pot Gemma has boxed.
+**A hands-free cooking coach that runs entirely on the phone, in airplane mode.** Gemma 4 E2B on LiteRT-LM is the judgment: it writes the recipe, looks at the counter, hears your answers and changes the recipe through function calling. LiteRT hand tracking is the reflex: a model-free loop that warns the moment a hand reaches a pot Gemma has boxed.
 
-Built for the Google Gemma Hardware Hackathon (AGI House, Oct 24, 2026 · Mobile AI track, Best Use of LiteRT). No cloud, no account, no API key.
+Runs on **iPhone 17** (LiteRT-LM Swift, Metal GPU) and **Pixel 10** (LiteRT-LM Kotlin, **Tensor G5 NPU, verified**). No cloud, no account, no API key.
 
-[한국어](#remy-한국어) · [LiteRT-LM on iPhone: field report](docs/litert-on-iphone.md) · [Build and demo guide](docs/iphone-build.md)
+Built at the Google Gemma Hardware Hackathon, AGI House, October 24, 2026.
 
-## What happens in the kitchen
-
-1. **"Hey Chef, let's make a cold pasta salad."** Gemma writes the ingredient list, Remy says it out loud and starts the camera. Once every ingredient is confirmed, Gemma writes the cooking steps for exactly that list and Remy asks "Ready to cook?" (Settings has a fixed pasta-salad preset for rehearsals; it is off by default.)
-2. **"Hey Chef, here's the onion."** The spoken name only asks for a look. Gemma identifies the held food without being told the name, then checks a closer crop or a matching printed label before the ingredient counts as present.
-3. **Talk to it like a person.** "I don't have red wine vinegar." Remy suggests a substitute and calls `substitute_ingredient`, so the list and the steps change on screen. "Let's just cook with what I have" removes what is missing. It remembers what you lack.
-4. **"Which knife should I use?" / "Where's the salt?"** A box appears around the right one, drawn from Gemma 4 `box_2d` grounding. While cooking, one knife stays boxed: the detector finds it, Vision follows it, and the box turns dashed while it is being reacquired. It is a bounding box only; it does not locate the blade.
-5. **Reflexes.** Gemma names what on the counter could be hot and boxes it. From then on the fast loop compares hand landmarks against that zone on every frame, with no model call, and the alarm shows its frame-to-alarm time. In the cooker demo, a fast-detector pot, pan, kettle, cup or bowl box seeds Vision tracking at once, without waiting for Gemma. Any hand landmark or finger segment that stays on the box for one second turns on the "Hot surface" warning and a held vibration until the hand leaves. Leaving clears both at once, and coming back starts a fresh one-second timer.
-6. **Hands full?** Thumbs up: next step. Thumbs down: back. Open palm: quiet.
-7. **"How salty do you like it?"** Gemma hears your spoken answer from the audio itself and saves it as a preference.
-8. **See it think.** A drawer on the left edge shows Gemma's work live: what it heard, each tool call with its timing and result, what the camera checks saw, and reflex alarms. Evidence (Settings → Session) tallies the session: Gemma calls, tool calls, vision checks, boxes and audio.
-
-## How it runs
-
-| Job | Model and LiteRT feature | iPhone 17, Release, Oct 24 (* = earlier build on iPhone 17 Pro, Oct 23) |
-|---|---|---|
-| Ingredients, then cooking steps | Gemma 4 text, JSON output contract, streaming preview | plan 8.0 s (prefill 931 tok/s, decode 50 tok/s, first token 0.94 s) |
-| Conversation and actions | Gemma 4 function calling: 16 phase-gated `Tool`s, the app validates and runs each call, results return as `tool` messages | 0.7–1.9 s per turn |
-| See the counter | Gemma 4 vision, 140 visual tokens per image | ingredient check 2–3 s* · look 1.5–2 s* |
-| Box items, find hot things | Gemma 4 `box_2d` grounding (0–1000 grid) | ~3 s* |
-| Hear the cook's answers | Gemma 4 native audio input (16 kHz WAV) | ~1.1 s* |
-| Speech to text | Apple SpeechAnalyzer on device; Gemma transcribes if unavailable | ~0.1 s after you stop* |
-| Hands and gestures | MediaPipe Gesture Recognizer on LiteRT, CPU | 29.8 fps · 12.9 ms median, 21 ms p95 |
-| Object boxes | EfficientDet-Lite0 on LiteRT (MediaPipe Object Detector), CPU, 10 Hz | 9.7 ms median, 13 ms p95, beside the hand tracker |
-| Hot-zone alarm | Fast loop on hand landmarks, no model call | within one frame |
-
-**Three LiteRT models at once.** Gemma 4 E2B (LiteRT-LM, language model on the Metal GPU, vision and audio encoders on the CPU), the MediaPipe hand and gesture models, and EfficientDet-Lite0. A YOLOX-M Core ML detector can replace EfficientDet behind a Settings switch; it is off by default.
-
-**Two loops.** Gemma is slow and smart: it plans, interprets the scene and talks. The hand loop is fast and dumb: it checks geometry against zones Gemma already boxed, so a warning never waits for the model.
-
-**The app holds the state, not the model.** The recipe graph, pantry, finished steps, preferences and what the cook lacks live in `RemyCore`, a pure Swift package with 101 tests, and are saved to disk. Gemma decides through tools; the app validates every call before anything changes.
-
-**LiteRT-LM features used:** `Tool` function calling with automatic tool calling off, `ResponseFormat.json` schema-constrained decoding (a Settings switch), `getBenchmarkInfo` for the prefill and decode speeds shown on Evidence, per-encoder backends (LM GPU, vision CPU, audio CPU), `visualTokenBudget`, `enableSpeculativeDecoding` (timing test), a per-model `cacheDir`, and a backported `Conversation.clone()`. What broke and what we measured is in the [field report](docs/litert-on-iphone.md).
-
-## The reflex loop on Pixel
-
-`android/` is one screen that runs the two loops on a Google Pixel: Gemma 4 E2B on the Tensor TPU names and boxes what could be hot, and MediaPipe hands feed a Kotlin port of `HazardWatch` on every frame, with no model call. Same prompts, same geometry, same palette.
-
-On branch `android/full-port` the Pixel build also carries the iPhone app's cooking flow, in the same landscape layout (pill top centre, Gemma drawer on the left edge, dock with video, microphone and sparkle bottom left, the primary action in the middle, Session and Settings bottom right):
-
-- Recipe: dish → Gemma ingredient draft (or the pasta-salad preset) → checklist → Gemma instructions → step by step. The session is saved to app files and restored at launch. `core/` is a Kotlin port of RemyCore with 97 JUnit tests.
-- Voice: Android's on-device `SpeechRecognizer` (en-US, prefer offline) behind the same "Remy" / "Hey Remy" wake gate; when Remy has asked a question, the answer is recorded at 16 kHz and Gemma hears it (`Content.AudioBytes`). Without on-device recognition, Gemma transcribes the audio.
-- Agent: the 16 tools from `ChefAgent.swift`, automatic tool calling off, the app validates and runs each call; every tool call shows in the drawer with its time.
-- Camera: ingredient presentation check (blind identity, then a closer crop), look, find with `box_2d`, the hazard scan and held 1 s alarm, a knife box with a left-fingertip warning, and thumbs up / thumbs down / open palm through MediaPipe Gesture Recognizer.
-- Not on Android: GoPro input and Core ML detectors (iPhone-only); EfficientDet-Lite0 object boxes (no model bundled, boxes come from Gemma); the iPhone's package-label OCR corroboration; the cooker-power voice commands; the left-hand finger-curl HUD.
-
-| What | How | Pixel 10 (Tensor G5, Android 17), Oct 24 |
-|---|---|---|
-| Gemma 4 E2B | LiteRT-LM 0.18.0, precompiled Tensor bundle, `Backend.NPU`, CPU fallback | `install_and_verify.py`: `"path":"npu"`, load 4338 ms |
-| What could be hot | the iPhone's `hazards` prompt, image + text | 2.85 s; prefill 484 tok at 471 tok/s, first token 1.09 s |
-| Box it | Gemma 4 `box_2d` grounding | 2.05 s |
-| Hands | MediaPipe Hand Landmarker on LiteRT, CPU, one request in flight | ~10 fps on a 30 fps camera; 51–77 ms per frame |
-| Alarm | `HazardWatch` (Kotlin port, 22 JUnit tests): any landmark or finger segment on the box for 1 s | orange "Reflex NN ms" pill, vibration and a beep |
-
-Packaged with the `litert-google-tensor` skill (`package_litertlm.py --preset gemma-4-e2b --target Tensor_G5 --target Tensor_G6`, sideload delivery). The 3.1–3.3 GB bundles stay out of Git; `install_and_verify.py --litertlm-package android/litertlm_package` builds, installs and pushes the one for the attached phone. The screen's bottom line names the path it actually took (NPU or CPU fallback) with the measured times. Not yet measured: the reflex alarm on Pixel with a real pot in view, and a Pixel 11 (Tensor G6) run.
-
-## Honest limits
-
-Gemma 4 E2B is a 2B model. It confuses look-alikes (a red bell pepper for a tomato), cannot count reliably, and names items that are not there when asked an open question. Remy is built around that: boxes as proof, knives found by size, the cook's word beats the camera, and alarms come from geometry, not the model. Step completion is suggested by Gemma and confirmed by the cook. Remy does not measure temperature or promise to prevent injuries.
-
-## Repo map
-
-- `iOS/Remy/Sources/` — the app. `ChefAgent` (16 tools and the agent prompt), `ChefPrompt` / `ChefBrain` (every Gemma task), `GemmaRunner` (LiteRT-LM actor and the session tally), `HandsFreeListener` + `AppleSpeech` (always-on mic), `CameraService` + `FastObjectDetector` (MediaPipe hands, EfficientDet), `AppModel` (state and the two loops), `RemyEval` (on-device eval harness).
-- `RemyCore/` — pure Swift: recipe contracts and validation, cooking session, hazard and reach watchers, voice commands and wake gate, box parsing. `swift test --package-path RemyCore` runs in seconds.
-- `Vendor/LiteRTLM`, `Vendor/MediaPipeTasks` — pinned packages (`UPSTREAM.json`; `Conversation.clone()` backport and a safe callback adapter).
-- `scripts/` — model and detector download with SHA-256 checks, device build, phone smoke test, simulator prompt eval.
-- `android/` — the Pixel app: `TensorLmLoader` (from the skill), `GemmaHazards`, `MainActivity` (CameraX + MediaPipe), `RemyModel` (recipe, voice and agent flow), `VoiceListener`, `agent/` (GemmaRunner, ChefAgent), `core/` (RemyCore port) and its JUnit tests.
-- `docs/` — [build and demo guide](docs/iphone-build.md), [LiteRT field report](docs/litert-on-iphone.md), [team workflow](docs/team-workflow.md).
-
-Generate the Xcode project from `iOS/project.yml`. Signing and the 2.6 GB model stay local and out of Git.
+[LiteRT-LM on iPhone: field report](docs/litert-on-iphone.md) · [Build and demo guide](docs/iphone-build.md) · [Pixel packaging](android/litertlm_package/INTEGRATION.md)
 
 ---
 
-# Remy (한국어)
+## What happens in the kitchen
 
-비행기 모드의 iPhone 한 대에서 전부 돌아가는 핸즈프리 요리 코치입니다. LiteRT-LM 위의 Gemma 4 E2B가 판단을 맡습니다. 레시피를 쓰고, 조리대를 보고, 대답을 듣고, 함수 호출로 레시피를 직접 바꿉니다. LiteRT 위의 MediaPipe 손 추적은 반사신경입니다. Gemma가 박스로 표시한 뜨거운 냄비에 손이 닿는 순간, 모델 호출 없이 경고합니다.
+1. **"Hey Remy, let's make a cold pasta salad."** Gemma writes the ingredient list and Remy reads it aloud and starts the camera. Once every ingredient is confirmed, Gemma writes the cooking steps for exactly that list and asks "Ready to cook?". A fixed pasta-salad preset exists in Settings for stage reliability; any other dish or any edited list is planned by Gemma.
+2. **"Hey Remy, here's the cucumber."** The spoken name is only a hint. Gemma identifies the held food without being told, then confirms it on a closer crop before it counts.
+3. **"I don't have red wine vinegar."** Remy suggests a substitute and calls `substitute_ingredient`; the list and the steps change on screen. "Let's just cook with what I have" removes what's missing.
+4. **"Where's the salt?"** Gemma draws a box around it (`box_2d` on a 0–1000 grid).
+5. **Reflexes.** Gemma names what on the counter could be hot and boxes it once. From then on, hand landmarks are checked against that box on every frame, with no model call, and the pill shows the time from frame to alarm. A knife is tracked with its own box while you cut.
+6. **Hands full?** Thumbs up: next step. Thumbs down: back. Open palm: quiet.
+7. **"How salty do you like it?"** Gemma hears the spoken answer directly as audio and saves it as a preference.
+8. **See it think.** A drawer on the left edge shows Gemma's work live: what it heard, every tool call with its result and milliseconds, what the camera saw, and every reflex alarm. Evidence tallies the session: Gemma calls, tool calls, vision checks, boxes and audio.
 
-Google Gemma 하드웨어 해커톤(AGI House, 2026년 10월 24일 · 모바일 AI 트랙, Best Use of LiteRT) 출품작입니다. 클라우드도, 계정도, API 키도 없습니다.
+## Two loops
 
-[English](#remy) · [iPhone에서의 LiteRT-LM 현장 보고서](docs/litert-on-iphone.md) · [빌드와 데모 안내](docs/iphone-build.md)
-
-## 주방에서 일어나는 일
-
-1. **"Hey Chef, 콜드 파스타 샐러드 만들자."** Gemma가 재료 목록을 쓰고, Remy가 소리 내어 말한 뒤 카메라를 켭니다. 재료가 모두 확인되면 Gemma가 그 목록에 맞춘 조리 단계를 쓰고, Remy가 "요리 시작할까요?"라고 묻습니다. (리허설용 고정 파스타 샐러드 프리셋이 설정에 있으며 기본값은 꺼짐입니다.)
-2. **"Hey Chef, 여기 양파."** 말한 이름은 확인 요청일 뿐입니다. Gemma가 이름을 듣지 않은 채 들고 있는 음식을 알아보고, 더 가까운 크롭이나 일치하는 인쇄 라벨로 한 번 더 확인해야 재료가 '있음'이 됩니다.
-3. **사람에게 말하듯 말하세요.** "레드 와인 식초가 없어." Remy가 대체 재료를 제안하고 `substitute_ingredient`를 호출해 화면의 목록과 단계가 바뀝니다. "있는 걸로 그냥 하자"라고 하면 없는 재료를 뺍니다. 없다고 한 재료는 기억합니다.
-4. **"어떤 칼을 써야 해?" / "소금 어디 있어?"** Gemma 4 `box_2d` 그라운딩으로 맞는 물건 주위에 박스가 뜹니다. 요리 중에는 칼 하나가 계속 박스로 표시됩니다. 검출기가 찾고 Vision이 따라가며, 다시 찾는 동안에는 점선이 됩니다. 경계 상자일 뿐 칼날 위치는 알지 못합니다.
-5. **반사신경.** Gemma가 조리대에서 뜨거울 수 있는 것을 말하고 박스를 그립니다. 그 뒤로는 빠른 루프가 매 프레임 손 랜드마크를 그 구역과 비교하며 모델을 부르지 않고, 경보에는 프레임에서 경보까지의 시간이 표시됩니다. 쿠커 데모에서는 빠른 검출기가 찾은 냄비·팬·주전자·컵·그릇 박스로 Gemma를 기다리지 않고 바로 Vision 추적을 시작합니다. 손 랜드마크나 손가락 마디가 1초 동안 박스에 머물면 "Hot surface" 경고와 진동이 켜지고, 손을 뗄 때까지 유지됩니다. 손을 떼면 둘 다 바로 꺼지고, 다시 들어오면 1초 타이머가 새로 시작됩니다.
-6. **손이 바쁘면?** 엄지 위: 다음 단계. 엄지 아래: 뒤로. 손바닥: 조용히.
-7. **"얼마나 짜게 좋아해요?"** Gemma가 오디오에서 직접 대답을 듣고 선호로 저장합니다.
-8. **생각하는 모습을 봅니다.** 왼쪽 가장자리의 서랍이 Gemma의 작업을 실시간으로 보여 줍니다. 들은 말, 도구 호출마다의 시간과 결과, 카메라 확인이 본 것, 반사 경보. Evidence(설정 → Session)는 이번 세션의 Gemma 호출, 도구 호출, 비전 확인, 박스, 오디오 횟수를 셉니다.
-
-## 어떻게 돌아가나
-
-| 역할 | 모델과 LiteRT 기능 | iPhone 17, Release, 10월 24일 (* = 이전 빌드, iPhone 17 Pro, 10월 23일) |
+| | Gemma loop (judgment) | Reflex loop |
 |---|---|---|
-| 재료, 그다음 조리 단계 | Gemma 4 텍스트, JSON 출력 계약, 스트리밍 미리보기 | 계획 8.0초(프리필 931 tok/s, 디코딩 50 tok/s, 첫 토큰 0.94초) |
-| 대화와 행동 | Gemma 4 함수 호출: 단계별로 주어지는 `Tool` 16개, 앱이 호출마다 검증하고 실행, 결과는 `tool` 메시지로 회신 | 턴당 0.7–1.9초 |
-| 조리대 보기 | Gemma 4 비전, 이미지당 시각 토큰 140개 | 재료 확인 2–3초* · 보기 1.5–2초* |
-| 물건 박스, 뜨거운 것 찾기 | Gemma 4 `box_2d` 그라운딩(0–1000 격자) | 약 3초* |
-| 요리사의 대답 듣기 | Gemma 4 네이티브 오디오 입력(16 kHz WAV) | 약 1.1초* |
-| 음성을 글로 | Apple SpeechAnalyzer 온디바이스, 불가하면 Gemma가 받아씀 | 말이 끝나고 약 0.1초* |
-| 손과 제스처 | LiteRT 위의 MediaPipe Gesture Recognizer, CPU | 29.8fps · 중앙값 12.9ms, p95 21ms |
-| 물체 박스 | LiteRT 위의 EfficientDet-Lite0(MediaPipe Object Detector), CPU, 10Hz | 손 추적과 함께 중앙값 9.7ms, p95 13ms |
-| 뜨거운 구역 경보 | 손 랜드마크 위의 빠른 루프, 모델 호출 없음 | 한 프레임 안에 |
+| What | Plans, recognizes, grounds, converses, acts through tools | Checks hand geometry against zones Gemma boxed |
+| Runs on | Gemma 4 E2B via LiteRT-LM (iPhone Metal GPU / Pixel Tensor NPU) | MediaPipe Tasks running LiteRT hand and gesture models, CPU |
+| Speed | about a second per turn | every camera frame |
+| Waits for the other? | no | **never**: the alarm doesn't call the language model |
 
-**LiteRT 모델 세 개가 동시에.** Gemma 4 E2B(LiteRT-LM, 언어 모델은 Metal GPU, 비전·오디오 인코더는 CPU), MediaPipe 손·제스처 모델, EfficientDet-Lite0. 설정 스위치로 EfficientDet 대신 YOLOX-M Core ML 검출기를 쓸 수 있으며 기본값은 꺼짐입니다.
+**The model proposes, code decides.** Recipe state, pantry, finished steps and preferences live in app code: `RemyCore` (pure Swift, 101 tests) and its Kotlin port (97 JUnit tests). Gemma acts only through tools, and the app validates every call before anything changes.
 
-**두 개의 루프.** Gemma는 느리고 똑똑합니다. 계획하고, 장면을 해석하고, 대화합니다. 손 루프는 빠르고 단순합니다. Gemma가 이미 박스로 표시한 구역과 기하학만 비교하므로 경고가 모델을 기다리지 않습니다.
+## Gemma 4 E2B, used fully
 
-**상태는 모델이 아니라 앱이 들고 있습니다.** 레시피 그래프, 재료 현황, 끝난 단계, 선호, 없는 재료는 테스트 101개가 있는 순수 Swift 패키지 `RemyCore`에 있고 디스크에 저장됩니다. Gemma는 도구로 결정하고, 앱은 무엇이든 바뀌기 전에 모든 호출을 검증합니다.
+- **Text:** writes the ingredient draft and the step graph as **structured JSON**, which the app validates; one corrective retry on bad output.
+- **Vision:** identifies a held ingredient without being told the name, verifies it on a crop, looks at the board, names what could be hot.
+- **Grounding:** `box_2d` boxes for hot things and requested items (we prompt with the Gemini `box_2d` convention; it works on E2B).
+- **Audio:** hears the cook's spoken answers at "ask" steps as 16 kHz audio, with no separate speech recognizer.
+- **Native function calling:** 16 tools, phase-gated so Gemma only sees the ones that make sense now. Automatic tool calling is off; results return as `tool` messages for a follow-up turn.
+- **System instructions** with a prompt-injection guard: text seen in images or heard in audio is treated as untrusted scene content, never as instructions.
+- **Two Gemma engines** on the iPhone, one dedicated to ingredient recognition so recipe writing doesn't block it.
 
-**사용한 LiteRT-LM 기능:** 자동 도구 호출을 끈 `Tool` 함수 호출, `ResponseFormat.json` 스키마 제약 디코딩(설정 스위치), Evidence에 표시되는 프리필·디코딩 속도를 위한 `getBenchmarkInfo`, 인코더별 백엔드(LM GPU, 비전 CPU, 오디오 CPU), `visualTokenBudget`, `enableSpeculativeDecoding`(시간 측정용), 모델별 `cacheDir`, 백포트한 `Conversation.clone()`. 무엇이 깨졌고 무엇을 측정했는지는 [현장 보고서](docs/litert-on-iphone.md)에 있습니다.
+## LiteRT and LiteRT-LM
 
-## Pixel의 반사 루프
+**On the demo path**
+- LiteRT-LM `Engine` + `Conversation` in Swift (0.18.1) and Kotlin (0.18.0), with `Tool` function calling and automatic tool calling off.
+- Per-encoder backends: language model on the Metal GPU, vision and audio encoders on CPU (iPhone); `Backend.NPU` with CPU fallback (Pixel).
+- `visualTokenBudget` (140 per image) and a per-model `cacheDir`, which brings a reload from 4.1 s to 0.9 s.
+- `getBenchmarkInfo` for every number on the Evidence screen: prefill, decode, time to first token.
+- MediaPipe Tasks running LiteRT models for hands and gestures, beside Gemma.
+- On Pixel: Google's AOT-compiled Tensor bundle, packaged and verified with the `litert-google-tensor` agent skill.
 
-`android/`는 Google Pixel에서 두 루프를 돌리는 화면 하나입니다. Tensor TPU 위의 Gemma 4 E2B가 뜨거울 수 있는 것을 말하고 박스를 그리며, MediaPipe 손 추적이 매 프레임 `HazardWatch`의 Kotlin 포팅에 들어가 모델 호출 없이 비교합니다. 프롬프트, 기하학, 색은 iPhone과 같습니다.
+**Evaluated, written up in the [field report](docs/litert-on-iphone.md)**
+- Schema-constrained decoding (`ResponseFormat.json`); a Settings switch, off by default after a native abort on iPhone.
+- Speculative decoding (MTP); never stops with a JSON schema, LiteRT-LM issue #3944.
+- `Conversation.clone()` for prompt reuse, backported and benchmarked.
+- GPU vision encoder on iPhone; fails to prepare in 0.18.1 (`STABLEHLO_COMPOSITE`).
 
-`android/full-port` 브랜치의 Pixel 빌드에는 iPhone 앱의 요리 흐름도 같은 가로 화면 배치로 들어 있습니다(위 가운데 알약, 왼쪽 가장자리 Gemma 서랍, 왼쪽 아래 비디오·마이크·반짝임 독, 가운데 주 버튼, 오른쪽 아래 Session과 설정):
+## Measured
 
-- 레시피: 요리 → Gemma 재료 초안(또는 파스타 샐러드 프리셋) → 체크리스트 → Gemma 조리법 → 단계별 진행. 세션은 앱 파일에 저장되고 실행할 때 복원됩니다. `core/`는 RemyCore의 Kotlin 포팅이며 JUnit 테스트 97개가 있습니다.
-- 음성: Android 온디바이스 `SpeechRecognizer`(en-US, 오프라인 우선)를 같은 "Remy" / "Hey Remy" 호출어 게이트 뒤에 두었습니다. Remy가 질문한 직후의 답은 16 kHz로 녹음해 Gemma가 직접 듣습니다(`Content.AudioBytes`). 온디바이스 인식이 없으면 Gemma가 오디오를 받아씁니다.
-- 에이전트: `ChefAgent.swift`의 도구 16개, 자동 도구 호출 끔, 앱이 각 호출을 검증하고 실행합니다. 모든 도구 호출은 걸린 시간과 함께 서랍에 표시됩니다.
-- 카메라: 재료 보여주기 확인(이름 없이 식별 후 더 가까운 크롭으로 확인), 보기, `box_2d`로 찾기, 위험 스캔과 1초 유지 경보, 칼 박스와 왼손 손끝 경고, MediaPipe Gesture Recognizer의 엄지 위·엄지 아래·편 손바닥.
-- Android에 없는 것: GoPro 입력과 Core ML 감지기(iPhone 전용), EfficientDet-Lite0 물체 박스(모델 미포함, 박스는 Gemma가 그림), iPhone의 포장 라벨 OCR 확인, 조리기 전원 음성 명령, 왼손 손가락 굽힘 표시.
+| Component | Device | Runtime / backend | Protocol | Result |
+|---|---|---|---|---|
+| Gemma 4 E2B recipe plan | iPhone 17, Release | LiteRT-LM 0.18.1; LM Metal GPU, vision/audio CPU | 855-token prefill, 355-token decode, single-call planner | 931 / 50.4 tok/s, first token 0.94 s, 8.0 s |
+| Gemma tool turns | iPhone 17 | same | 5 scripted turns | 0.7–1.9 s each |
+| Hands | iPhone 17 | MediaPipe Tasks (LiteRT models), CPU | 49.8 s live run | 29.8 fps, 12.9 ms median |
+| Gemma 4 E2B load | Pixel 10, Tensor G5, Android 17 | LiteRT-LM 0.18.0, `Backend.NPU` | skill's `install_and_verify.py` | `"path":"npu"`, 4.3 s cold, under 1 s cached |
+| Gemma hot-object look (image + text) | Pixel 10 | same | 484-token prompt with one image | first token 0.33–1.09 s, prefill 471–1,769 tok/s; box 2.05 s |
+| Gemma ingredient draft | Pixel 10 | same | spoken "Remy, let's make pasta" → `plan_recipe` | 6.1 s |
 
-| 무엇 | 어떻게 | Pixel 10 (Tensor G5, Android 17), 10월 24일 |
-|---|---|---|
-| Gemma 4 E2B | LiteRT-LM 0.18.0, 미리 컴파일된 Tensor 번들, `Backend.NPU`, CPU 대체 | `install_and_verify.py`: `"path":"npu"`, 로드 4338ms |
-| 뜨거울 수 있는 것 | iPhone의 `hazards` 프롬프트, 이미지 + 텍스트 | 2.85초, 프리필 484토큰 471 tok/s, 첫 토큰 1.09초 |
-| 박스 그리기 | Gemma 4 `box_2d` 그라운딩 | 2.05초 |
-| 손 | LiteRT 위의 MediaPipe Hand Landmarker, CPU, 요청 하나씩 | 30fps 카메라에서 약 10fps, 프레임당 51–77ms |
-| 경보 | `HazardWatch`(Kotlin 포팅, JUnit 테스트 22개): 손 랜드마크나 손가락 마디가 1초 동안 박스에 닿으면 | 주황색 "Reflex NN ms" 알약, 진동, 짧은 소리 |
+## Limits
 
-`litert-google-tensor` 스킬로 패키징했습니다(`package_litertlm.py --preset gemma-4-e2b --target Tensor_G5 --target Tensor_G6`, sideload 전달). 3.1–3.3 GB 번들은 Git에 넣지 않고, `install_and_verify.py --litertlm-package android/litertlm_package`가 빌드, 설치, 연결된 폰에 맞는 번들 전송을 합니다. 화면 아래 줄에 실제로 쓴 경로(NPU 또는 CPU 대체)와 측정 시간이 표시됩니다. 아직 측정하지 않은 것: 실제 냄비를 둔 Pixel의 반사 경보, Pixel 11(Tensor G6) 실행.
+Gemma 4 E2B is a 2B-effective model: it can confuse look-alikes, can't count reliably, and may name things that aren't there when asked an open question. Remy is built around that: boxes as proof, the cook's word beats the camera, and alarms come from geometry, not the model. Remy has no temperature sensor; it warns about pots Gemma judged likely to be hot.
 
-## 솔직한 한계
+## Repo map
 
-Gemma 4 E2B는 2B 모델입니다. 비슷한 것을 헷갈리고(빨간 파프리카를 토마토로), 개수를 잘 못 세고, 열린 질문을 받으면 없는 물건을 말합니다. Remy는 그 전제로 만들었습니다. 증거로서의 박스, 크기로 찾는 칼, 카메라보다 늘 우선하는 사람의 말, 모델이 아니라 기하학에서 나오는 경보. 단계 완료는 Gemma가 제안하고 요리사가 확정합니다. Remy는 온도를 재지 않으며 부상 예방을 약속하지 않습니다.
+- `iOS/Remy/Sources/`: the iPhone app. `ChefAgent` (16 tools and the agent prompt), `ChefPrompt` / `ChefBrain` (every Gemma task), `GemmaRunner` (LiteRT-LM actor), `HandsFreeListener` + `AppleSpeech` (always-on mic), `CameraService` + `FastObjectDetector` (hands and object boxes), `AppModel` (state and the two loops), `RemyEval` (on-device eval harness).
+- `RemyCore/`: pure Swift recipe contracts and validation, cooking session, hazard and knife watchers, voice commands and wake gate, box parsing. `swift test --package-path RemyCore`.
+- `android/`: the Pixel app in Kotlin and Jetpack Compose, same layout as the iPhone. `TensorLmLoader` (from the skill), `RemyModel` (recipe, voice and agent flow), `agent/` (Gemma runner and the 16 tools), `core/` (RemyCore port, JUnit tests).
+- `Vendor/`: pinned LiteRT-LM and MediaPipe Tasks packages with provenance (`UPSTREAM.json`).
+- `scripts/`: model download with SHA-256 checks, device build, phone smoke test, simulator prompt eval.
+- `docs/`: [build and demo guide](docs/iphone-build.md), [LiteRT field report](docs/litert-on-iphone.md), [team workflow](docs/team-workflow.md).
 
-## 저장소 안내
+## Build
 
-- `iOS/Remy/Sources/` — 앱. `ChefAgent`(도구 16개와 에이전트 프롬프트), `ChefPrompt` / `ChefBrain`(모든 Gemma 작업), `GemmaRunner`(LiteRT-LM 액터와 세션 집계), `HandsFreeListener` + `AppleSpeech`(상시 마이크), `CameraService` + `FastObjectDetector`(MediaPipe 손, EfficientDet), `AppModel`(상태와 두 루프), `RemyEval`(온디바이스 평가 도구).
-- `RemyCore/` — 순수 Swift: 레시피 계약과 검증, 요리 세션, 위험·손뻗음 감시, 음성 명령과 호출어 게이트, 박스 파싱. `swift test --package-path RemyCore`가 몇 초면 끝납니다.
-- `Vendor/LiteRTLM`, `Vendor/MediaPipeTasks` — 고정된 패키지(`UPSTREAM.json`, `Conversation.clone()` 백포트와 안전 콜백 어댑터).
-- `scripts/` — SHA-256 확인이 있는 모델·검출기 다운로드, 기기 빌드, 폰 스모크 테스트, 시뮬레이터 프롬프트 평가.
-- `android/` — Pixel 앱: `TensorLmLoader`(스킬에서 생성), `GemmaHazards`, `MainActivity`(CameraX + MediaPipe), `RemyModel`(레시피·음성·에이전트 흐름), `VoiceListener`, `agent/`(GemmaRunner, ChefAgent), `core/`(RemyCore 포팅)와 JUnit 테스트.
-- `docs/` — [빌드와 데모 안내](docs/iphone-build.md), [LiteRT 현장 보고서](docs/litert-on-iphone.md), [팀 작업 방식](docs/team-workflow.md).
+- **iPhone:** `python3 scripts/download_model.py`, then `cd iOS && xcodegen generate` and build the `Remy` scheme in Release. Put your team and bundle ID in `iOS/Local.xcconfig`.
+- **Pixel:** `cd android && ./gradlew :app:assembleRelease`. Push the Tensor bundle for your phone's chip with `install_and_verify.py --litertlm-package android/litertlm_package` (see [INTEGRATION.md](android/litertlm_package/INTEGRATION.md)).
 
-Xcode 프로젝트는 `iOS/project.yml`로 생성합니다. 서명 설정과 2.6 GB 모델은 로컬에만 있고 Git에는 없습니다.
+The 2.6 GB iPhone model and the 3.1–3.3 GB Tensor bundles are downloaded locally and stay out of Git.
