@@ -52,8 +52,16 @@ fun SessionContent(state: RemyState, model: RemyModel) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                AppText(state.line, appText(26.sp, color = AppTheme.text, tracking = (-0.4).sp))
-                if (state.handsFree && state.isLoaded && state.lastHeard.isNotEmpty()) AppText("“${state.lastHeard}”", appText(13.sp, color = AppTheme.secondary), maxLines = 1)
+                // cameraGuidanceLine: the knife warning, then the curl hint, then Remy's line.
+                val headline = if (state.knifeAlert) "Left hand is near the knife" else if (!state.hotAlert && state.fingerCurlHint != null) state.fingerCurlHint!! else state.line
+                AppText(headline, appText(28.sp, color = AppTheme.text, tracking = (-0.5).sp))
+                if (state.handsFree && state.isLoaded) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    VoiceOrb(if (!state.listenerOn) OrbMode.OFF else if (state.speaking) OrbMode.SPEAKING else if (state.hearing) OrbMode.HEARING
+                        else if (state.understanding || state.ingredientChecking || (state.isBusy && !state.instructionsPreparing)) OrbMode.THINKING else OrbMode.LISTENING)
+                    if (state.lastHeard.isNotEmpty() && !state.hearing) AppText("“${state.lastHeard}”", appText(13.sp, color = AppTheme.secondary), maxLines = 1)
+                    Spacer(Modifier.weight(1f))
+                    state.gemmaSeconds?.let { AppText(String.format("%.1f s", it), appText(12.sp, FontWeight.Medium, AppTheme.secondary)) }
+                }
                 AppText(state.status, appText(13.sp, color = AppTheme.secondary))
             }
         }
@@ -149,7 +157,16 @@ fun SessionContent(state: RemyState, model: RemyModel) {
                             AppText(if (session.salted) "${step.guardItem.replaceFirstChar { it.uppercase() }} remembered · " +
                                 (if (session.saltOrigin == EvidenceOrigin.CAMERA) "Gemma observed" else "you confirmed")
                                 else "${step.guardItem.replaceFirstChar { it.uppercase() }} not added yet", appText(12.sp, FontWeight.Medium, if (session.salted) AppTheme.accent else AppTheme.text))
-                            if (!session.salted) OutlineButton("I added it") { model.confirmSalt() }
+                            AppText(if (session.zone == null) "Mark where the ${step.guardItem} is" else "Location marked by you · re-mark after moving it",
+                                appText(12.sp, color = AppTheme.secondary))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlineButton(if (state.markSaltLocation) "Cancel marking" else "Mark ${step.guardItem}") {
+                                    state.markSaltLocation = !state.markSaltLocation
+                                    if (state.markSaltLocation) state.sessionOpen = false
+                                }
+                                if (!session.salted) OutlineButton("I added it") { model.confirmSalt() }
+                                else OutlineButton("Allow more") { model.allowMoreSalt() }
+                            }
                         }
                     }
                     if (step.kind == RecipeStep.Kind.DO) item {

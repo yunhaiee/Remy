@@ -7,13 +7,18 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.yunha.remy.core.DishAssessment
+import com.yunha.remy.core.FingerBend
+import com.yunha.remy.core.HandDisplayPose
 import com.yunha.remy.core.HazardZone
 import com.yunha.remy.core.ItemBox
-import com.yunha.remy.core.Point2
 
 /** Gemma's work as it happens, for the drawer (AgentActivity.swift). Kept in memory only, capped at 80 rows. */
 class AgentActivity {
-    enum class Kind(val label: String) { HEARD("Heard"), GEMMA("Gemma"), TOOL("Tool"), VISION("Vision"), PLAN("Plan"), REFLEX("Reflex"), GESTURE("Gesture") }
+    enum class Kind(val label: String) {
+        HEARD("Heard"), GEMMA("Gemma"), TOOL("Tool"), VISION("Vision"), PLAN("Plan"), REFLEX("Reflex"), GESTURE("Gesture"),
+        SAYS("Chef says"), SYSTEM("System")
+    }
     enum class State { RUNNING, DONE, FAILED }
     data class Entry(val id: Long, val kind: Kind, val title: String, val detail: String, val ms: Double?, val state: State)
 
@@ -47,22 +52,48 @@ class AgentActivity {
 class RemyState {
     val activity = AgentActivity()
 
-    // Camera and the fast loop.
+    // Camera and the fast loop. Times are SystemClock.elapsedRealtimeNanos() in seconds, the camera's clock.
     var imageAspect by mutableStateOf(4f / 3f)
-    var hands by mutableStateOf<List<List<Point2>>>(emptyList())
+    /** Display-only hands (HandContinuity), observed or briefly estimated, and the frame they belong to. */
+    var hands by mutableStateOf<List<HandDisplayPose>>(emptyList())
+    var handsTime by mutableDoubleStateOf(0.0)
+    /** Watched hot surfaces as located (not expanded); the 120% safety boundary is drawn and checked. */
     var zones by mutableStateOf<List<HazardZone>>(emptyList())
+    var recoveringZones by mutableStateOf<List<HazardZone>>(emptyList())
+    /** Items Gemma located, drawn for a few seconds. */
     var boxes by mutableStateOf<List<ItemBox>>(emptyList())
+    /** Fresh EfficientDet-Lite0 boxes (score 0.5 or more) and the frame time they came from. */
+    var liveObjects by mutableStateOf<List<ItemBox>>(emptyList())
+    var liveObjectsTime by mutableDoubleStateOf(0.0)
     var videoOn by mutableStateOf(true)
 
-    // The pill.
-    var line by mutableStateOf("Starting the camera…")
+    // The pill. `line` is Remy's own line (chefLine on iPhone); safety and hints are arbitrated on top of it.
+    var line by mutableStateOf("Tell me what we're making.")
     var gemmaSeconds by mutableStateOf<Double?>(null)
-    var reflexMs by mutableStateOf<Double?>(null)
     var working by mutableStateOf(false)
+    /** Held hot-surface warning: a fresh hand overlaps the expanded hot box. */
+    var hotAlert by mutableStateOf(false)
+    /** A short alert banner (reach warning) while now < alertUntil. */
+    var alertUntil by mutableDoubleStateOf(0.0)
+    var alertTitle by mutableStateOf("")
+    var alertSubtitle by mutableStateOf("")
 
     var knifeBox by mutableStateOf<ItemBox?>(null)
     var knifeAlert by mutableStateOf(false)
     var knifeRecovering by mutableStateOf(false)
+    /** Left-hand curl estimates and the curl hint, during cooking only. */
+    var leftFingerFlexion by mutableStateOf<List<FingerBend>>(emptyList())
+    var fingerCurlHint by mutableStateOf<String?>(null)
+    var markSaltLocation by mutableStateOf(false)
+
+    // The finished-dish review (FinishedDishSummaryView).
+    var showsDishSummary by mutableStateOf(false)
+    var finishedDishPhoto by mutableStateOf<android.graphics.Bitmap?>(null)
+    var finishedDishName by mutableStateOf("")
+    var dishAssessment by mutableStateOf<DishAssessment?>(null)
+    var dishReviewLoading by mutableStateOf(false)
+    var dishReviewError by mutableStateOf<String?>(null)
+    var dishSummaryMessage by mutableStateOf<String?>(null)
     /** The careful-ingredient crop Gemma is checking, in normalized image space. */
     var presentedBox by mutableStateOf<ItemBox?>(null)
 
@@ -97,6 +128,8 @@ class RemyState {
     var speaking by mutableStateOf(false)
     var recording by mutableStateOf(false)
     var understanding by mutableStateOf(false)
+    var ingredientChecking by mutableStateOf(false)
+    var instructionsPreparing by mutableStateOf(false)
     var speechPath by mutableStateOf("not started")
 
     // Settings, in the iPhone order.
@@ -109,6 +142,8 @@ class RemyState {
     var shortRecipes by mutableStateOf(true)
     var demoPreset by mutableStateOf(true)
     var gestures by mutableStateOf(true)
+    /** Evidence: "Left-hand finger curl guidance" (gripHints on iPhone). */
+    var gripHints by mutableStateOf(true)
     var constrainedDecoding by mutableStateOf(false)
     var handResolution by mutableIntStateOf(480)
     var gestureModel by mutableStateOf("not loaded")
@@ -131,6 +166,8 @@ class RemyState {
     var ttft by mutableStateOf<Double?>(null)
     val callMs = mutableStateListOf<Long>()
     var lastReflexMs by mutableStateOf<Double?>(null)
+    var alertCount by mutableIntStateOf(0)
+    var detectorMs by mutableStateOf<Double?>(null)
     var handFps by mutableDoubleStateOf(0.0)
     var handMs by mutableDoubleStateOf(0.0)
     var thermalHeadroom by mutableStateOf<Float?>(null)

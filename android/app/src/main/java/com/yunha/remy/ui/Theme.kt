@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -59,6 +62,12 @@ fun Eyebrow(text: String, color: Color = AppTheme.accentLight, modifier: Modifie
     AppText(text.uppercase(), appText(11.sp, FontWeight.Medium, color, 1.2.sp), modifier, maxLines = 1)
 }
 
-/** "Glass" without blur: surface at 72% with a 1 dp outline. Text-led, no elevation shadows. */
+/** GlassStyle on iPhone: the material of everything floating over the video, dark (default) or light, from Settings. */
+object GlassStyle {
+    var light by mutableStateOf(false)
+}
+
+/** "Glass" without blur: dark is the surface at 72% with a 1 dp outline; light is a faint white tint and stroke. */
 fun Modifier.glass(shape: Shape, stroke: Color = AppTheme.outline): Modifier =
-    this.background(AppTheme.surface.copy(alpha = 0.72f), shape).border(1.dp, stroke, shape)
+    if (GlassStyle.light) this.background(Color.White.copy(alpha = 0.12f), shape).border(1.dp, Color.White.copy(alpha = 0.32f), shape)
+    else this.background(AppTheme.surface.copy(alpha = 0.72f), shape).border(1.dp, stroke, shape)

@@ -50,7 +50,7 @@ enum class OrbMode { OFF, IDLE, LISTENING, HEARING, THINKING, SPEAKING, ALERT }
  * pulsing in the warning colour while an alarm shows.
  */
 @Composable
-fun VoiceOrb(mode: OrbMode, modifier: Modifier = Modifier) {
+fun VoiceOrb(mode: OrbMode, modifier: Modifier = Modifier, alertColor: Color = AppTheme.safety) {
     var angle by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(mode) {
         var last = 0L
@@ -73,7 +73,7 @@ fun VoiceOrb(mode: OrbMode, modifier: Modifier = Modifier) {
             alpha = if (mode == OrbMode.OFF) 0.45f else 1f
         }) {
             val path = sparklePath(size)
-            val brush: Brush = if (mode == OrbMode.ALERT) Brush.linearGradient(listOf(AppTheme.safety, AppTheme.safety)) else AppTheme.gradient
+            val brush: Brush = if (mode == OrbMode.ALERT) Brush.linearGradient(listOf(alertColor, alertColor)) else AppTheme.gradient
             drawPath(path, brush, style = Stroke(width = 1.8.dp.toPx(), join = StrokeJoin.Round))
         }
     }

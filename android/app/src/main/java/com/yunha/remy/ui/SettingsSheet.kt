@@ -22,7 +22,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -49,113 +52,131 @@ fun SheetFrame(title: String, onDone: () -> Unit, content: @Composable () -> Uni
     }
 }
 
-/** BrainView in ContentView.swift: the same sections and items, in the same order. GoPro and Metal are iPhone-only. */
+/** BrainView in ContentView.swift: the same sections and items, in the same order and words. */
 @Composable
-fun SettingsSheet(state: RemyState, actions: RemyActions) {
+fun SettingsSheet(state: RemyState, actions: RemyActions, model: com.yunha.remy.RemyModel) {
+    var confirmReset by remember { mutableStateOf(false) }
     SheetFrame("Settings", { state.settingsOpen = false }) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { Eyebrow("Remy") }
+            item { Eyebrow("Remy", AppTheme.secondary) }
             item { ToggleRow("Hands-free voice", null, state.handsFree) { actions.setHandsFree(it) } }
             item { ToggleRow("Watch the board automatically", null, state.automaticChecks, enabled = state.isLoaded) { state.automaticChecks = it } }
             item { ToggleRow("Object boxes", "Shows everyday object detections independently of safety monitoring.", state.objectBoxes) { state.objectBoxes = it } }
-            item { ToggleRow("Fire safety · box & alerts", "Warns when a hand stays on a hot-surface box for one second, held until the hand leaves. Switch Fire safety off here to pause.", state.safetyAlerts) { state.safetyAlerts = it } }
-            item { ToggleRow("Knife tracking · box & warning", "Orange box around the knife Gemma located, and a warning and vibration while a left-hand fingertip overlaps it. Independent of Object boxes and Fire safety.", state.knifeTracking) { state.knifeTracking = it } }
-            item { ToggleRow("Spoken responses", null, state.spokenResponses) { state.spokenResponses = it } }
+            item { ToggleRow("Fire safety · box & alerts", "Warns as soon as a hand enters a hot-surface box, after step 1 until the dish is complete, alongside knife tracking. Reporting power off keeps heat caution active. Switch Fire safety off here to pause.", state.safetyAlerts) { state.safetyAlerts = it; model.safetyToggled() } }
+            item { ToggleRow("Knife tracking · box & warning", "Silent orange warning and vibration for an overlapping left finger below its curl cutoff: thumb 10%, other fingers 25%. The banner lasts one second; vibration clears immediately on exit, with one second before re-triggering. Independent of Object boxes and Fire safety.", state.knifeTracking) { state.knifeTracking = it; model.safety.resetKnifeTracking(); model.safety.sessionChanged() } }
+            item { ToggleRow("Spoken responses", null, state.spokenResponses) { model.setSpoken(it) } }
             item { ToggleRow("Short recipes (up to 5 steps)", null, state.shortRecipes) { state.shortRecipes = it } }
-            item { ToggleRow("Pasta-salad demo preset", "“Make pasta salad” uses the fixed five ingredients and two app-written steps. Off, Gemma plans every dish.", state.demoPreset) { state.demoPreset = it } }
+            item { ToggleRow("Pasta-salad demo preset", "“Make pasta salad” uses the fixed five ingredients and three app-written steps. Off, Gemma plans every dish.", state.demoPreset) { state.demoPreset = it } }
             item { ToggleRow("Hand gestures", "Thumbs up (hold 1 second): next. Thumbs down: back. Open palm (hold): quiet.", state.gestures) { state.gestures = it } }
 
-            item { Spacer(Modifier.height(8.dp)); Eyebrow("Camera") }
-            item { ValueRow("Camera", "Pixel rear camera (GoPro input is iPhone-only)") }
+            item { Spacer(Modifier.height(8.dp)); Eyebrow("Camera", AppTheme.secondary) }
+            item { ValueRow("Camera", "Pixel rear camera (GoPro HERO12 input is iPhone-only)") }
             item {
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     AppText("Hand tracking resolution", appText(15.sp), Modifier.weight(1f))
-                    for (value in listOf(480, 720)) {
-                        val selected = state.handResolution == value
-                        AppText("${value}p", appText(13.sp, FontWeight.Medium, if (selected) AppTheme.background else AppTheme.text),
-                            Modifier.padding(start = 6.dp).background(if (selected) AppTheme.accentLight else AppTheme.surfaceHigh, RoundedCornerShape(50))
-                                .clickable(remember { MutableInteractionSource() }, null) { actions.setResolution(value) }
-                                .padding(horizontal = 12.dp, vertical = 6.dp))
-                    }
+                    for (value in listOf(480, 720)) Chip("${value}p", state.handResolution == value) { actions.setResolution(value) }
                 }
             }
 
-            item { Spacer(Modifier.height(8.dp)); Eyebrow("Look") }
-            item { ValueRow("Controls over the video", "Dark glass") }
+            item { Spacer(Modifier.height(8.dp)); Eyebrow("Look", AppTheme.secondary) }
+            item {
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AppText("Controls over the video", appText(15.sp), Modifier.weight(1f))
+                    Chip("Dark glass", !GlassStyle.light) { GlassStyle.light = false }
+                    Chip("Light glass", GlassStyle.light) { GlassStyle.light = true }
+                }
+            }
 
-            item { Spacer(Modifier.height(8.dp)); Eyebrow("Gemma on this Pixel") }
-            item { ValueRow("Model", if (state.isLoaded) "Gemma 4 E2B" else if (state.isLoading) "Loading…" else "Not loaded") }
-            item { ToggleRow("Schema-constrained decoding", "Off: the JSON schema is described in the prompt and the app parses and validates the reply, as on iPhone.", state.constrainedDecoding, enabled = false) { } }
-            item { ValueRow("Running on", state.lmBackend ?: "not loaded") }
+            item { Spacer(Modifier.height(8.dp)); Eyebrow("Gemma on this Pixel", AppTheme.secondary) }
+            item { ValueRow("Model", if (state.isLoaded || state.isLoading) "Gemma 4 E2B" else "Not loaded: push the Tensor bundle over adb") }
+            item { ToggleRow("Schema-constrained decoding", "LiteRT enforces the JSON schema token by token. Off, the schema is only described in the prompt (default, after a native crash seen on one iPhone). Not available in LiteRT-LM 0.18.0 for Android.", state.constrainedDecoding, enabled = false) { } }
+            item { if (state.isLoaded) ValueRow("Running on", state.lmBackend ?: "") else AppText(if (state.isLoading) "Loading Gemma…" else "Load Gemma: reopen Remy after pushing the bundle", appText(15.sp, FontWeight.Medium, AppTheme.accent)) }
 
-            item { Spacer(Modifier.height(8.dp)); Eyebrow("Session") }
+            item { Spacer(Modifier.height(8.dp)); Eyebrow("Session", AppTheme.secondary) }
             item { ActionRow("Evidence") { state.evidenceOpen = true } }
             item { ActionRow("Run local text test", enabled = state.isLoaded && !state.isBusy) { actions.textTest() } }
             item { ActionRow("Describe the live camera image", enabled = state.isLoaded && !state.isBusy) { actions.describeCamera() } }
-            item { ActionRow("Look for hot surfaces again", enabled = state.isLoaded) { actions.rescanHazards(); state.settingsOpen = false } }
-            if (state.smokePassed) item { AppText("Local test passed", appText(14.sp, color = AppTheme.accent)) }
+            if (state.smokePassed) item { AppText("Local test passed", appText(15.sp, color = AppTheme.accent)) }
             if (state.rawResponse.isNotEmpty()) item { AppText(state.rawResponse, appText(13.sp, color = AppTheme.secondary), maxLines = 4) }
-            item { ActionRow("Reset recipe and memory", color = AppTheme.safety) { actions.reset(); state.settingsOpen = false } }
+            item { ActionRow("Reset recipe and memory", color = Color.Red) { confirmReset = true } }
             item { Spacer(Modifier.height(12.dp)) }
+        }
+    }
+    if (confirmReset) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).clickable(remember { MutableInteractionSource() }, null) { confirmReset = false },
+            contentAlignment = Alignment.Center) {
+            Column(Modifier.width(320.dp).background(AppTheme.surfaceHigh, RoundedCornerShape(14.dp)).padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                AppText("Start a fresh session?", appText(15.sp, FontWeight.Medium, AppTheme.secondary))
+                AppText("Reset recipe and memory", appText(17.sp, FontWeight.Medium, Color.Red),
+                    Modifier.clickable(remember { MutableInteractionSource() }, null) { confirmReset = false; actions.reset(); state.settingsOpen = false }.padding(6.dp))
+                AppText("Cancel", appText(17.sp, FontWeight.Medium, AppTheme.accent),
+                    Modifier.clickable(remember { MutableInteractionSource() }, null) { confirmReset = false }.padding(6.dp))
+            }
         }
     }
 }
 
-/** EvidenceView: what is actually running, the session tally, the LiteRT features in use, and honest limits. */
 @Composable
-fun EvidenceSheet(state: RemyState) {
+private fun Chip(title: String, selected: Boolean, onTap: () -> Unit) {
+    AppText(title, appText(13.sp, FontWeight.Medium, if (selected) AppTheme.background else AppTheme.text),
+        Modifier.padding(start = 6.dp).background(if (selected) AppTheme.accentLight else AppTheme.surfaceHigh, RoundedCornerShape(50))
+            .clickable(remember { MutableInteractionSource() }, null, onClick = onTap).padding(horizontal = 12.dp, vertical = 6.dp))
+}
+
+/** EvidenceView: what is actually running, the session events and the last raw Gemma reply. */
+@Composable
+fun EvidenceSheet(state: RemyState, model: com.yunha.remy.RemyModel) {
+    @Suppress("UNUSED_VARIABLE") val version = state.sessionVersion
     SheetFrame("Evidence", { state.evidenceOpen = false }) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { Eyebrow("What is actually running") }
+            item { AppText("What is actually running", appText(15.sp, FontWeight.Medium, AppTheme.accent)) }
             val speed = if (state.prefillTps != null) String.format("prefill %.0f tok/s · decode %.1f tok/s · first token %.2f s",
                 state.prefillTps, state.decodeTps ?: 0.0, state.ttft ?: 0.0) else null
+            item { ValueRow("Gemma", if (state.isLoaded) "Gemma 4 E2B · LiteRT-LM ${com.yunha.remy.BuildConfig.LITERT_LM_VERSION} · ${state.lmBackend}" else "Not loaded") }
+            if (speed != null) item { AppText("Last call: $speed", appText(13.sp)) }
             val rows = listOf(
-                "Gemma" to (if (state.isLoaded) "Gemma 4 E2B · LiteRT-LM ${com.yunha.remy.BuildConfig.LITERT_LM_VERSION} · ${state.lmBackend}" else "Not loaded"),
-                "Last call" to (speed ?: "not measured yet"),
-                "Image input" to "Gemma 4 vision encoder on ${state.visionBackend ?: "not loaded"}",
+                "Image tokens" to "Set by the Tensor bundle's vision encoder (the iPhone sends 140 per image)",
                 "Structured output" to "JSON parsing and validation; native constraints disabled",
                 "Function calling" to "16 tools, the app runs each call",
                 "Reflex latency" to (state.lastReflexMs?.let { String.format("%.0f ms, frame to alarm", it) } ?: "not measured yet"),
                 "Audio in" to "Gemma hears answers to its questions",
+                "Speculative decoding" to "off",
+                "Fast vision" to "MediaPipe · LiteRT · CPU" + (if (state.handFps > 0) String.format(" · hands %.0f fps", state.handFps) else "") +
+                    (state.detectorMs?.let { String.format(" · objects %.0f ms", it) } ?: ""),
+                "Network path" to (state.networkBytes?.let { if (it == 0L) "No network traffic this session" else "Network traffic this session: $it bytes" } ?: "not measured yet"),
+            )
+            items(rows) { (name, value) -> ValueRow(name, value) }
+            item { AppText("Network availability is not proof of airplane mode. Inference uses local files; only model download uses the internet.", appText(12.sp)) }
+            item { ToggleRow("Left-hand finger curl guidance", null, state.gripHints) { state.gripHints = it; if (!it) model.safety.clearFingerFlexion() } }
+            item { AppText("Live camera estimates: 0% straight to 100% curled. Curl hints stop at 10% for the thumb and 25% for other fingers. Step 2 keeps the panel visible; unavailable readings show dashes. These are not measured joint angles or pressure.", appText(12.sp)) }
+
+            item { Spacer(Modifier.height(8.dp)); AppText("This Pixel", appText(15.sp, FontWeight.Medium, AppTheme.accent)) }
+            val pixel = listOf(
+                "Image input" to "Gemma 4 vision encoder on ${state.visionBackend ?: "not loaded"}",
                 "Speech" to state.speechPath,
-                "Fast vision" to "MediaPipe Hand Landmarker · LiteRT · CPU" + (if (state.handFps > 0) String.format(" · %.0f fps", state.handFps) else ""),
                 "Gestures" to state.gestureModel,
                 "Object boxes" to state.detectorModel,
-                "Network path" to (state.networkBytes?.let { if (it == 0L) "Network calls this session: 0" else "Network traffic this session: $it bytes" } ?: "not measured yet"),
                 "Airplane mode" to (state.airplaneMode?.let { if (it) "on" else "off" } ?: "unknown"),
                 "Device" to "${Build.MANUFACTURER} ${Build.MODEL} · ${Build.SOC_MODEL} · Android ${Build.VERSION.RELEASE}",
                 "Load" to (state.loadMs?.let { "$it ms" } ?: "not measured yet"),
                 "Gemma calls" to (state.medianCallMs?.let { "median $it ms of the last ${state.callMs.size}" } ?: "none yet"),
+                "This session" to "${state.gemmaCalls} Gemma calls · ${state.toolCalls} tool calls · ${state.visionChecks} vision checks · ${state.boxCount} boxes · ${state.audioCalls} audio",
                 "Thermal" to (state.thermalHeadroom?.takeIf { !it.isNaN() }?.let { String.format("headroom %.2f", it) } ?: "not reported"),
             )
-            items(rows) { (name, value) -> ValueRow(name, value) }
-            item { AppText("Network availability is not proof of airplane mode. Inference uses local files on this phone.", appText(12.sp, color = AppTheme.secondary)) }
-            item { Spacer(Modifier.height(8.dp)); Eyebrow("This session") }
-            item {
-                AppText("This session: ${state.gemmaCalls} Gemma calls · ${state.toolCalls} tool calls · ${state.visionChecks} vision checks · ${state.boxCount} boxes · ${state.audioCalls} audio",
-                    appText(15.sp))
+            items(pixel) { (name, value) -> ValueRow(name, value) }
+
+            item { Spacer(Modifier.height(8.dp)); AppText("Session events", appText(15.sp, FontWeight.Medium, AppTheme.accent)) }
+            val events = model.session.events.reversed()
+            items(events) { event ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AppText(event.message, appText(15.sp))
+                    AppText("${event.origin.raw.uppercase()} · ${java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(event.timestamp))}",
+                        appText(12.sp, color = AppTheme.secondary))
+                }
             }
-            item { Spacer(Modifier.height(8.dp)); Eyebrow("LiteRT on this Pixel") }
-            val features = listOf(
-                "LiteRT-LM Engine on " + (state.lmBackend ?: "not loaded"),
-                "Conversation API with system instruction and sampler config",
-                "Function calling with 16 declared tools, automatic tool calling off",
-                "Image input (Content.ImageBytes) with box_2d grounding",
-                "Audio input (Content.AudioBytes) for answers to Gemma's questions",
-                "Benchmark info: prefill, decode and first-token timing",
-                "MediaPipe Tasks on LiteRT: " + listOf("hand landmarks", state.gestureModel.takeIf { it.startsWith("Gesture") }, state.detectorModel.takeIf { it.startsWith("EfficientDet") }).filterNotNull().joinToString(", "),
-            )
-            items(features) { AppText(it, appText(14.sp)) }
-            item { Spacer(Modifier.height(8.dp)); Eyebrow("Honest limits") }
-            val limits = listOf(
-                "GoPro input and Core ML detectors are iPhone-only and not on this build.",
-                "Gemma runs one request at a time; a camera check waits for a running plan or reply.",
-                "Hot-surface and knife boxes come from Gemma looks, not continuous tracking; they can lag a moved pan.",
-                "Speech recognition uses Android's on-device recognizer when available; otherwise Gemma transcribes the audio.",
-            )
-            items(limits) { AppText(it, appText(13.sp, color = AppTheme.secondary)) }
-            item { Spacer(Modifier.height(8.dp)); Eyebrow("Last raw Gemma response") }
-            item { AppText(state.rawResponse.ifEmpty { "No response yet" }, appText(12.sp, color = AppTheme.secondary)) }
+            item { Spacer(Modifier.height(8.dp)); AppText("Last raw Gemma response", appText(15.sp, FontWeight.Medium, AppTheme.accent)) }
+            item { AppText(state.rawResponse.ifEmpty { "No response yet" }, appText(12.sp)) }
             item { Spacer(Modifier.height(12.dp)) }
         }
     }
