@@ -46,6 +46,10 @@ class VoiceListener(private val context: Context, private val events: Events) {
     @Volatile private var mode = Mode.WORDS
     private var recordThread: Thread? = null
     private var heardAt = 0L
+    /** Words so far in this utterance, from partial results; delivered once, by whichever comes first. */
+    private var partial = ""
+    private var delivered = false
+    private val finishFromPartial = Runnable { deliver(partial, fromPartial = true) }
     val onDevice: Boolean by lazy { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }
 
     /** What the Evidence sheet says about the speech path. */
@@ -93,18 +97,38 @@ class VoiceListener(private val context: Context, private val events: Events) {
         if (mode == Mode.WORDS) listenForWords() else if (recordThread == null) recordUtterance()
     }
 
+    /** One utterance's words to the app, then a fresh session for the next one. */
+    private fun deliver(text: String, fromPartial: Boolean) {
+        main.removeCallbacks(finishFromPartial)
+        if (delivered) return
+        delivered = true
+        val ms = if (heardAt > 0) (SystemClock.elapsedRealtime() - heardAt).toDouble() else 0.0
+        events.onListenerState(isOn, false)
+        if (text.isNotBlank()) {
+            Log.i(TAG, "REMY_MIC words${if (fromPartial) " (end of speech by silence)" else ""}: \"$text\"")
+            events.onWords(text, ms)
+        }
+        if (fromPartial) recognizer?.cancel()
+        main.postDelayed({ if (mode == Mode.WORDS) resume() }, 150)
+    }
+
     private fun listenForWords() {
+        partial = ""; delivered = false; heardAt = 0L; main.removeCallbacks(finishFromPartial)
         val r = recognizer ?: SpeechRecognizer.createOnDeviceSpeechRecognizer(context).also { recognizer = it }
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() { heardAt = SystemClock.elapsedRealtime(); events.onListenerState(true, true) }
+            override fun onBeginningOfSpeech() { if (heardAt == 0L) heardAt = SystemClock.elapsedRealtime(); events.onListenerState(true, true) }
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() { events.onListenerState(true, false) }
             override fun onError(error: Int) {
+                // Words already heard in this utterance still count, even if the recognizer then gives up.
+                if (!delivered && partial.isNotBlank()) { deliver(partial, fromPartial = true); return }
+                if (delivered) return
                 events.onListenerState(isOn, false)
                 // No match and speech timeout are the normal "nobody spoke" outcomes; listen again.
                 if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) Log.w(TAG, "REMY_MIC recognizer error $error")
+                else if (heardAt > 0 && SystemClock.elapsedRealtime() - heardAt < 15_000) Log.i(TAG, "REMY_MIC speech heard but no words recognized (error $error)")
                 val wait = when (error) {
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> 5000L
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY, SpeechRecognizer.ERROR_CLIENT -> 800L
@@ -115,20 +139,30 @@ class VoiceListener(private val context: Context, private val events: Events) {
             }
             override fun onResults(results: Bundle?) {
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-                val ms = if (heardAt > 0) (SystemClock.elapsedRealtime() - heardAt).toDouble() else 0.0
-                events.onListenerState(isOn, false)
-                if (text.isNotBlank()) events.onWords(text, ms)
-                main.postDelayed({ if (mode == Mode.WORDS) resume() }, 150)
+                deliver(text.ifBlank { partial }, fromPartial = false)
             }
-            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onPartialResults(partialResults: Bundle?) {
+                val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                if (text.isBlank() || delivered || text == partial) return
+                if (heardAt == 0L) heardAt = SystemClock.elapsedRealtime()
+                partial = text
+                events.onListenerState(true, true)
+                // About 1.2 s with no new words ends the utterance, like the iPhone's end-of-speech silence.
+                // Repeated identical partials don't count as new words, so they don't hold the utterance open.
+                main.removeCallbacks(finishFromPartial)
+                main.postDelayed(finishFromPartial, 1200)
+            }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 700L)
+            // Partial results let the app end the utterance itself; the recognizer's own endpointing on this Pixel
+            // often kept the session open without ever returning the final words.
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            // The recognizer reads this as Int; a Long is silently ignored.
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 900)
         }
         runCatching { r.startListening(intent) }.onFailure { Log.e(TAG, "REMY_MIC start failed", it); main.postDelayed({ resume() }, 1000) }
     }

@@ -21,8 +21,10 @@ class ChefWakeGate {
     }
 
     companion object {
-        private val PREFIX = Regex("^\\W*(?:hey[ ,]+)?(remy)\\b")
-        private val STRIP = Regex("(?i)^\\W*(?:hey[ ,]+)?(remy)\\b[\\s,.!?]*")
+        /** "Remy" as Android's on-device recognizer writes it; "ready" is never a wake word. */
+        const val WAKE = "(?:remy|remi|rémy|rémi|remmy)"
+        private val PREFIX = Regex("^\\W*(?:(?:hey|hi)[ ,]+)?$WAKE(?![a-z])")
+        private val STRIP = Regex("(?i)^\\W*(?:(?:hey|hi)[ ,]+)?$WAKE(?![a-z])[\\s,.!?]*")
 
         fun hasPrefix(text: String): Boolean = PREFIX.containsMatchIn(text.lowercase())
     }
