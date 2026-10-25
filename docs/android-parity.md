@@ -62,7 +62,7 @@ Status words:
 | Evidence: Gemma, Last call speed, Image tokens, Structured output, Function calling 16 tools, Reflex latency, Audio in, Speculative decoding off, Fast vision, Network path, caveat | Sources/ContentView.swift:752-763 | ui/SettingsSheet.kt:129-149 | Delivered, not yet seen; Image tokens is honest that the Tensor bundle sets it |
 | Evidence: "Left-hand finger curl guidance" toggle and caption | Sources/ContentView.swift:764-765 | ui/SettingsSheet.kt:151-152 | Delivered, not yet seen |
 | Evidence: Session events (newest first, ORIGIN · time) and Last raw Gemma response | Sources/ContentView.swift:767-775 | ui/SettingsSheet.kt:169-179 | Delivered, not yet seen |
-| Evidence: Export inference receipt | Sources/ContentView.swift:776, Sources/AppModel.swift:2212-2233 | none | Missing (no receipt file or share sheet on Android yet) |
+| Evidence: Export inference receipt | Sources/ContentView.swift:776, Sources/AppModel.swift:2212-2233 | RemyModel.kt (saveReceipt, receiptText), ui/SettingsSheet.kt (Export inference receipt) | Delivered, not yet seen (after any Gemma call; JSON in the app files folder and the Android share sheet) |
 | GoPro setup sheet | Sources/ContentView.swift:524-620 | none | Not possible: GoPro HERO12 control is iPhone-only (CoreBluetooth, iPhone USB networking) |
 | Settings persist across launches | Sources/AppModel.swift:37-70, 316-318, 335-337 | MainActivity.kt:208 | Delivered, not yet seen |
 

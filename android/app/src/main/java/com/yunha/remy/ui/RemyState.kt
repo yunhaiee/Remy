@@ -119,6 +119,7 @@ class RemyState {
     var rawResponse by mutableStateOf("")
     var lastHeard by mutableStateOf("")
     var smokePassed by mutableStateOf(false)
+    var receiptReady by mutableStateOf(false)
     /** Bumped whenever the cooking session changes, so session views recompose. */
     var sessionVersion by mutableIntStateOf(0)
 

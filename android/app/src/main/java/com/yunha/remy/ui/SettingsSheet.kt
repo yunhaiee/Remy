@@ -177,6 +177,15 @@ fun EvidenceSheet(state: RemyState, model: com.yunha.remy.RemyModel) {
             }
             item { Spacer(Modifier.height(8.dp)); AppText("Last raw Gemma response", appText(15.sp, FontWeight.Medium, AppTheme.accent)) }
             item { AppText(state.rawResponse.ifEmpty { "No response yet" }, appText(12.sp)) }
+            if (state.receiptReady) item {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                ActionRow("Export inference receipt") {
+                    val text = model.receiptText() ?: return@ActionRow
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("application/json")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, text).putExtra(android.content.Intent.EXTRA_SUBJECT, "Remy inference receipt")
+                    context.startActivity(android.content.Intent.createChooser(send, "Export inference receipt"))
+                }
+            }
             item { Spacer(Modifier.height(12.dp)) }
         }
     }

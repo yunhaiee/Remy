@@ -249,7 +249,24 @@ class RemyModel(private val context: Context, val state: RemyState, private val 
         state.gemmaSeconds = result.ms / 1000.0
         state.callMs.add(result.ms); while (state.callMs.size > 20) state.callMs.removeAt(0)
         result.prefillTps?.let { state.prefillTps = it }; result.decodeTps?.let { state.decodeTps = it }; result.ttft?.let { state.ttft = it }
+        saveReceipt(result)
     }
+
+    /** AppModel.saveReceipt: the last call's reply and timing, kept on the phone for the Evidence export. */
+    private fun saveReceipt(result: GemmaRunner.Result) {
+        val report = JSONObject()
+            .put("timestamp", java.time.Instant.now().toString())
+            .put("device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}").put("os", "Android ${android.os.Build.VERSION.RELEASE}")
+            .put("runtime", "LiteRT-LM ${BuildConfig.LITERT_LM_VERSION}").put("configuredBackend", state.lmBackend ?: "not loaded")
+            .put("elapsedMS", result.ms).put("speed", result.speed ?: JSONObject.NULL)
+            .put("networkBytesThisSession", state.networkBytes ?: JSONObject.NULL).put("response", result.text)
+            .put("note", "A network byte count is not an airplane-mode or packet-capture audit.")
+        runCatching { File(context.getExternalFilesDir(null), "latest-inference-receipt.json").writeText(report.toString(2)) }
+            .onSuccess { state.receiptReady = true }
+    }
+
+    /** The receipt as text for the share sheet ("Export inference receipt"). */
+    fun receiptText(): String? = runCatching { File(context.getExternalFilesDir(null), "latest-inference-receipt.json").readText() }.getOrNull()
 
     // ---- Recipe flow -------------------------------------------------------------------------------------------
 
