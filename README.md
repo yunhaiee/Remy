@@ -88,3 +88,14 @@ Gemma 4 E2B is a 2B-effective model: it can confuse look-alikes, can't count rel
 - **Pixel:** `cd android && ./gradlew :app:assembleRelease`. Push the Tensor bundle for your phone's chip with `install_and_verify.py --litertlm-package android/litertlm_package` (see [INTEGRATION.md](android/litertlm_package/INTEGRATION.md)).
 
 The 2.6 GB iPhone model and the 3.1–3.3 GB Tensor bundles are downloaded locally and stay out of Git.
+
+## Team
+
+- **Yunha Lee**
+- **Tony Kim**
+
+Remy grew out of the team repo we built during the hackathon; this repo is the cleaned-up iPhone and Pixel version.
+
+## License
+
+[MIT](LICENSE). Vendored packages in `Vendor/` keep their own licenses (Apache-2.0).

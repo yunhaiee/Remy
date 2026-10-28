@@ -5,10 +5,6 @@ Current image-path qualification: every image call uses the same 140-token encod
 Runtime stability note: these measurements describe the earlier constrained-decoding path. The app now keeps schemas in prompts and validates responses in Swift because the pinned native llguidance tokenizer aborted on iPhone. Image calls use a fixed 140-token signature after allocation failures in object localization and later image checks. Remeasure accuracy/detail and timings for this path.
 
 
-[English](#english) · [한국어](#한국어)
-
-## English
-
 **Setup:** Gemma 4 E2B (`.litertlm`, 2.6 GB) on an iPhone 17 through LiteRT-LM 0.18.1 (Swift). Language model on the Metal GPU; vision and audio encoders on the CPU. 100% on device, works in airplane mode.
 
 ### What Gemma does in Remy
@@ -48,50 +44,6 @@ Read from LiteRT-LM's own `getBenchmarkInfo` and the app's receipts, not typed b
 - Function calling, five scripted turns: `substitute_ingredient`, `check_ingredients`, two `remove_ingredient`, `save_preference`, `mark_added`, each 0.7–1.9 s.
 - MediaPipe hands on CPU with EfficientDet-Lite0 at 10 Hz beside it: 29.8 fps, 12.9 ms median / 21.4 ms p95 per frame; the detector 9.7 ms median / 13.3 ms p95.
 - Backgrounding stalls everything: launched while the phone was dark, the app went to the background and the Metal engine never finished its first call. Keep Remy in front during evals.
-
-## 한국어
-
-**구성:** Gemma 4 E2B(`.litertlm`, 2.6 GB)를 LiteRT-LM 0.18.1(Swift)로 iPhone 17에서 실행합니다. 언어 모델은 Metal GPU, 비전·오디오 인코더는 CPU에서 동작합니다. 100% 온디바이스이며 비행기 모드에서도 작동합니다.
-
-### Remy에서 Gemma가 하는 일
-
-| 역할 | LiteRT-LM 기능 | iPhone 17 |
-|---|---|---|
-| 한 문장으로 레시피 계획 | 제약 디코딩(JSON 스키마), 화면 스트리밍 | 11초(5단계), 작성 중에 재료가 먼저 표시 |
-| 셰프로서 대화하고 행동 | 함수 호출, 도구 16개, 앱이 실행하고 결과를 `tool` 메시지로 회신 | 턴당 0.5–0.8초 |
-| 조리대 보기 | 이미지 입력, 작업별 시각 토큰 예산(70 / 140 / 280) | 빠른 확인 1.3초, 정밀 확인 3.4초 |
-| 물건에 박스 표시, 뜨거운 냄비 찾기 | Gemma 4 `box_2d` 그라운딩(0–1000 격자) | 약 3초 |
-| 요리사의 대답 듣기 | 네이티브 오디오 입력(16 kHz) | 약 1.3초 |
-
-모델을 쓰지 않는 두 번째 루프(MediaPipe 손 추적, 약 29fps)가 Gemma가 찾은 박스를 이용해, 손이 뜨거운 냄비에 닿거나 소금에 두 번째로 손을 뻗으면 즉시 경고합니다.
-
-### E2B 비전이 잘하는 것과 못하는 것 (사진으로 측정)
-
-- **잘함:** 일상 물건 이름 대기, 라벨 읽기, 이름으로 지정한 물건에 박스 그리기(칼, 오이, 토마토, 바나나, 중식도, 빵칼), 크기·위치 표현("가장 작은 칼", "아래쪽 가장 큰 칼").
-- **뜨거운 것(보수적으로 질문: "뜨겁거나 뜨거울 수 있는 것, 꺼져 보여도 조리도구·가전 포함"):** 밥솥 사진 → "kettle, electric cooker"로 둘 다 정확히 박스. 전기 주전자, 핫플레이트, 가스레인지 위 냄비도 모두 이름과 박스가 맞음(이름 1.2–2초, 박스 약 3–4초). 채소만 있는 도마에서는 "knife"도 뜨겁다고 답해서, 열 관련 단어만 뜨거운 구역이 되도록 거릅니다.
-- **약함:** 칼 종류 이름(과도·셰프 나이프·톱니칼은 다른 칼을 고름), 개수 세기(칼 5개 → 4, 6개 → 4, 레몬 5개 → 4, "칼 전부" 박스는 결과 없음), 비슷하게 생긴 것(빨간 파프리카 → 토마토, 주키니 → 오이), 빈 화면에서 무엇이 보이냐고 물으면 없는 물건을 지어냄. 그래서 앱은 칼을 크기로 찾고, Gemma가 박스까지 그릴 수 있는 재료만 '있음'으로 인정합니다.
-
-### LiteRT 팀과 공유할 만한 발견
-
-1. **0.18.1에서 iPhone GPU 비전 인코더가 실패**합니다(`STABLEHLO_COMPOSITE failed to prepare`). 그래서 이미지는 CPU에서 인코딩합니다. 시뮬레이터의 Metal 경로도 실패합니다(`texture argument index 31`).
-2. **추측 디코딩(MTP)은 대화 단위로 켤 수 있지만 JSON 스키마와는 함께 쓸 수 없습니다.** 제약 디코딩과 함께 쓰면 출력이 멈추지 않아 토큰 한도에 도달했고, 한도를 늘리자 컨텍스트를 넘어 드래프터가 중단되었습니다(초안 수락률 98.7%). 자유 형식으로 쓰고 관대하게 파싱하면 계획이 18.9초에서 13.9초로 줄었습니다(디코딩 26.6 → 44.9 tok/s, CPU 시뮬레이터). 하지만 iPhone GPU에서는 추측 디코딩 대화를 한 번 쓰면, 이후의 스키마·이미지 호출이 대화별로 끈 상태에서도 앱을 다시 실행할 때까지 네이티브 실행기 오류로 실패해서 앱에서는 끕니다.
-3. **Swift 스트리밍은 `automaticToolCalling: false`여도 도구를 항상 직접 실행**합니다. 그래서 앱이 실행하는 도구는 스트리밍이 아닌 호출을 씁니다.
-4. **느슨하게 작성된 도구 호출**(`call:save_preference{value:mild}`)은 파서 오류를 일으키며, 오류 문구에서 의도한 호출을 복구합니다.
-5. **스키마의 `maxItems`를 좁게 잡으면 계획이 약 100초 멈췄습니다**(모델이 한도와 싸우다 토큰 한도에 도달). 단계 수 제한은 프롬프트로 옮겼고, 이제 11초입니다.
-6. **벤치마크 정보는 `optIntoExperimentalAPIs()`가 필요합니다.** 없으면 속도 값이 조용히 비어 있습니다.
-7. **GPU 경합:** 카메라와 손 추적을 켠 채 계획하면 108초가 걸렸고, 계획 중 카메라를 멈추니 17–25초가 되었습니다.
-
-
-### Remy 빌드에서 측정 (iPhone 17, Release, 10월 24일)
-
-손으로 적은 값이 아니라 LiteRT-LM의 `getBenchmarkInfo`와 앱 영수증에서 읽은 값입니다.
-
-- 엔진 로드: 처음 4.1초(Metal GPU, 비전·오디오는 CPU), 컴파일 캐시가 생긴 뒤 0.9초.
-- "cold pasta salad" 레시피 계획: 전체 8.0초. 프리필 855토큰 931 tok/s, 디코딩 355토큰 50.4 tok/s, 첫 토큰 0.94초. 같은 프롬프트를 CPU 시뮬레이터에서: 18.6초(362 / 18.3 tok/s).
-- 함수 호출, 다섯 턴 대본: `substitute_ingredient`, `check_ingredients`, `remove_ingredient` 두 번, `save_preference`, `mark_added`, 턴마다 0.7–1.9초.
-- CPU의 MediaPipe 손 추적과 10Hz EfficientDet-Lite0를 함께: 29.8fps, 프레임당 중앙값 12.9ms / p95 21.4ms. 검출기는 중앙값 9.7ms / p95 13.3ms.
-- 백그라운드에서는 멈춥니다. 화면이 꺼진 폰에서 실행하자 앱이 백그라운드로 가서 Metal 엔진이 첫 호출을 끝내지 못했습니다. 평가하는 동안 Remy를 앞에 두세요.
-
 
 ## Native callback lifetime correction
 
